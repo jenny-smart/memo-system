@@ -3,77 +3,241 @@
 import streamlit as st
 import memo
 
-st.set_page_config(page_title="Memo 自動回填系統", layout="wide")
+st.set_page_config(
+    page_title="Memo 自動回填系統",
+    page_icon="📝",
+    layout="wide"
+)
 
 st.markdown("""
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap');
+
+:root {
+    --lemon:       #F5C518;
+    --lemon-dark:  #D4A017;
+    --lemon-soft:  #FFFBEA;
+    --lemon-mid:   #FFF3C4;
+    --charcoal:    #1C1C1E;
+    --ink:         #3A3A3C;
+    --muted:       #8E8E93;
+    --border:      #E5E5EA;
+    --surface:     #FFFFFF;
+    --success:     #34C759;
+    --danger:      #FF3B30;
+    --radius:      14px;
+    --shadow:      0 2px 16px rgba(0,0,0,0.07);
+}
+
 html, body, [class*="css"] {
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Noto Sans TC", sans-serif;
+    font-family: 'Noto Sans TC', sans-serif;
+    color: var(--charcoal);
 }
+
+#MainMenu, footer, header {
+    visibility: hidden;
+}
+
+[data-testid="stAppViewContainer"] {
+    background: #FAFAFA;
+}
+
 .block-container {
-    padding-top: 1.2rem !important;
+    padding-top: 2rem !important;
     padding-bottom: 2rem !important;
-    max-width: 1320px !important;
+    max-width: 1180px !important;
 }
-h1 {
-    font-size: 20px !important;
-    font-weight: 700 !important;
-    margin-bottom: 14px !important;
+
+/* Hero */
+
+.hero {
+    background: linear-gradient(135deg, #FFFDF0 0%, #FFFBEA 100%);
+    border: 1.5px solid var(--lemon-mid);
+    border-radius: var(--radius);
+    padding: 2rem 2.5rem 1.6rem;
+    margin-bottom: 2rem;
+    display: flex;
+    align-items: center;
+    gap: 1.2rem;
+    box-shadow: 0 2px 12px rgba(245,197,24,0.10);
 }
+
+.hero-emoji {
+    font-size: 3rem;
+    line-height: 1;
+}
+
+.hero-title {
+    font-family: 'Space Grotesk', sans-serif;
+    font-size: 1.9rem;
+    font-weight: 700;
+    color: var(--charcoal);
+    margin: 0;
+    letter-spacing: -0.5px;
+}
+
+.hero-sub {
+    color: var(--ink);
+    font-size: 0.92rem;
+    margin-top: 0.3rem;
+    opacity: 0.78;
+}
+
+/* Step */
+
+.step-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    background: var(--lemon-mid);
+    border: 1.5px solid var(--lemon);
+    border-radius: 30px;
+    padding: 0.28rem 0.9rem;
+    font-size: 0.78rem;
+    font-weight: 700;
+    color: var(--charcoal);
+    margin-bottom: 0.9rem;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+}
+
+.step-num {
+    background: var(--lemon);
+    border-radius: 50%;
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.72rem;
+    font-weight: 700;
+}
+
 .sec-label {
     font-size: 12px;
     font-weight: 700;
-    color: #7a7a7a;
+    color: var(--muted);
     letter-spacing: .04em;
     margin-bottom: 8px;
 }
-[data-testid="stButton"] > button {
-    background: #111 !important;
-    color: #fff !important;
+
+.info-strip {
+    background: var(--lemon-soft);
+    border-left: 4px solid var(--lemon);
+    border-radius: 0 8px 8px 0;
+    padding: 0.7rem 1rem;
+    font-size: 0.9rem;
+    color: var(--ink);
+    margin-bottom: 1rem;
+}
+
+/* Buttons */
+
+.stButton > button {
+    background: var(--lemon) !important;
+    color: var(--charcoal) !important;
     border: none !important;
     border-radius: 10px !important;
-    font-size: 15px !important;
     font-weight: 700 !important;
-    padding: 10px 0 !important;
+    font-family: 'Noto Sans TC', sans-serif !important;
+    font-size: 15px !important;
+    padding: 0.55rem 1.2rem !important;
+    transition: background 0.18s, transform 0.12s !important;
+    box-shadow: 0 2px 10px rgba(245,197,24,0.28) !important;
 }
-[data-testid="stButton"] > button:hover {
-    background: #333 !important;
+
+.stButton > button:hover {
+    background: var(--lemon-dark) !important;
+    transform: translateY(-1px) !important;
 }
-[data-testid="stCode"] {
-    font-size: 12px !important;
+
+.stButton > button[kind="primary"] {
+    background: var(--charcoal) !important;
+    color: var(--lemon) !important;
+    box-shadow: 0 2px 12px rgba(28,28,30,0.25) !important;
+}
+
+.stButton > button[kind="primary"]:hover {
+    background: #2C2C2E !important;
+}
+
+/* Inputs */
+
+.stTextInput input,
+.stSelectbox > div > div,
+.stDateInput input,
+.stNumberInput input {
     border-radius: 10px !important;
+    border: 1.5px solid var(--border) !important;
+    background: white !important;
+    font-size: 15px !important;
 }
+
+.stRadio label {
+    font-weight: 600 !important;
+}
+
+/* Metrics */
+
 [data-testid="stMetric"] {
-    background: #fff;
+    background: white;
     border: 1px solid #ececec;
-    border-radius: 12px;
-    padding: 10px;
+    border-radius: 14px;
+    padding: 14px;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.04);
 }
-.small-muted {
-    color: #888;
-    font-size: 12px;
+
+[data-testid="stMetricValue"] {
+    font-family: 'Space Grotesk', sans-serif;
+    font-weight: 700;
 }
+
+/* Cards */
+
 .preview-card {
     border: 1px solid #ececec;
     border-radius: 14px;
-    padding: 12px 14px;
-    margin-bottom: 10px;
-    background: #fff;
+    padding: 14px 16px;
+    margin-bottom: 12px;
+    background: white;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.04);
 }
+
 .preview-ok {
-    border-left: 5px solid #16a34a;
+    border-left: 6px solid #22c55e;
 }
+
 .preview-ng {
-    border-left: 5px solid #d4d4d8;
+    border-left: 6px solid #d4d4d8;
 }
+
 .preview-title {
     font-size: 16px;
     font-weight: 700;
-    margin-bottom: 6px;
+    margin-bottom: 8px;
 }
+
 .preview-sub {
-    color: #555;
-    font-size: 13px;
+    color: #444;
+    font-size: 14px;
+    line-height: 1.7;
+}
+
+/* Code & Expander */
+
+[data-testid="stCode"] {
+    border-radius: 12px !important;
+    font-size: 13px !important;
+}
+
+.streamlit-expanderHeader {
+    font-weight: 700 !important;
+    font-size: 0.95rem !important;
+}
+
+hr {
+    border-color: #e8e8e8 !important;
+    margin: 1.4rem 0 !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -109,6 +273,13 @@ def sec(title):
     st.markdown(f'<p class="sec-label">{title}</p>', unsafe_allow_html=True)
 
 
+def step(num, title):
+    st.markdown(
+        f'<div class="step-pill"><span class="step-num">{num}</span>{title}</div>',
+        unsafe_allow_html=True
+    )
+
+
 def normalize_result(r):
     base = DEFAULT_RESULT.copy()
     if isinstance(r, dict):
@@ -122,7 +293,8 @@ def render_result(result):
     r = normalize_result(result)
     with result_container:
         st.markdown("---")
-        sec("5. 執行結果")
+        step("5", "執行結果")
+
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("執行筆數", r["processed"])
         c2.metric("成功", r["success"])
@@ -167,11 +339,14 @@ def clear_pick_states():
 def reset_before_action(clear_preview=True, clear_selection=True):
     st.session_state.logs = []
     st.session_state.result = None
+
     if clear_preview:
         st.session_state.preview_rows = []
         st.session_state.sheet_summary = None
+
     if clear_selection:
         clear_pick_states()
+
     try:
         log_box.code("尚未執行")
     except Exception:
@@ -181,6 +356,7 @@ def reset_before_action(clear_preview=True, clear_selection=True):
 def reset_before_execute_keep_preview():
     st.session_state.logs = []
     st.session_state.result = None
+
     try:
         log_box.code("尚未執行")
     except Exception:
@@ -196,7 +372,7 @@ def reset_mode_state_if_changed(current_mode):
 
 
 def render_preview_blocks(rows):
-    sec("3. 查詢結果預覽")
+    step("3", "查詢結果預覽")
 
     if not rows:
         st.info("查無資料")
@@ -210,34 +386,42 @@ def render_preview_blocks(rows):
     m2.metric("可自動回填", len(can_rows))
     m3.metric("無可參照來源", len(no_rows))
 
-    st.info("每一列是『目標訂單』；若有來源訂單，代表已找到最近一筆同地址＋已付款＋已處理＋有備註的來源。")
+    st.markdown(
+        '<div class="info-strip">每一列是「目標訂單」；若有來源訂單，代表已找到最近一筆同地址＋已付款＋已處理＋有備註的來源。</div>',
+        unsafe_allow_html=True
+    )
 
     selected_ids = []
 
     def render_section(title, items, section_key, default_checked):
         st.markdown(f"### {title}")
+
         if not items:
             st.caption("沒有資料")
             return
 
         c1, c2, c3 = st.columns([1, 1, 4])
+
         with c1:
             if st.button("本區全選", key=f"sel_{section_key}", use_container_width=True):
                 for row in items:
                     oid = str(row.get("order_id", "")).strip()
                     if oid:
                         st.session_state[f"pick_{oid}"] = True
+
         with c2:
             if st.button("本區全不選", key=f"unsel_{section_key}", use_container_width=True):
                 for row in items:
                     oid = str(row.get("order_id", "")).strip()
                     if oid:
                         st.session_state[f"pick_{oid}"] = False
+
         with c3:
             st.caption(f"本區共 {len(items)} 筆")
 
         for row in items:
             order_id = str(row.get("order_id", "")).strip()
+
             checked = st.checkbox(
                 f"選取 {order_id}",
                 key=f"pick_{order_id}",
@@ -289,25 +473,41 @@ def render_preview_blocks(rows):
     render_section("無可參照來源", no_rows, "no_source", False)
 
     st.markdown("---")
-    sec("4. 執行確認")
+    step("4", "執行確認")
+
     st.metric("目前勾選", len(selected_ids))
     st.caption("執行後會把來源客服備註寫入目標訂單，並把目標訂單服務狀態改為已處理。")
+
     return selected_ids
 
 
-st.title("📋 Memo 自動回填系統")
+st.markdown("""
+<div class="hero">
+  <div class="hero-emoji">📝</div>
+  <div>
+    <div class="hero-title">Memo 自動回填系統</div>
+    <div class="hero-sub">查詢訂單 → 比對最近來源備註 → 自動回填客服備註 → 更新服務狀態</div>
+  </div>
+</div>
+""", unsafe_allow_html=True)
 
-sec("1. 登入")
+step("1", "登入系統")
+
 col_e, col_p, col_env, col_login, col_unlock = st.columns([3.0, 3.0, 1.2, 1.2, 1.2])
+
 with col_e:
     email = st.text_input("Email")
+
 with col_p:
     password = st.text_input("Password", type="password")
+
 with col_env:
     env_option = st.selectbox("環境", ["prod", "dev"], index=0)
+
 with col_login:
     st.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
     login_clicked = st.button("Login", use_container_width=True)
+
 with col_unlock:
     st.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
     unlock_clicked = st.button("解除鎖定", use_container_width=True)
@@ -348,13 +548,17 @@ if login_clicked:
         st.session_state.is_running = False
 
 if st.session_state.is_logged_in:
-    st.caption(f"✅ 已登入：{st.session_state.login_identity}")
+    st.markdown(
+        f'<div class="info-strip">✅ 已登入：<strong>{st.session_state.login_identity}</strong></div>',
+        unsafe_allow_html=True
+    )
 else:
     st.info("請先登入後再查詢或執行。")
 
 st.markdown("---")
 
-sec("2. 設定查詢條件")
+step("2", "設定查詢條件")
+
 mode = st.radio(
     "",
     ["By Google Sheet", "By 電話", "By 搜尋條件"],
@@ -380,22 +584,44 @@ search_btn = False
 execute_btn = False
 
 if mode == "By Google Sheet":
-    sheet_run_mode = st.radio("處理方式", ["指定列號", "依剩餘筆數處理"], horizontal=True)
+    sheet_run_mode = st.radio(
+        "處理方式",
+        ["指定列號", "依剩餘筆數處理"],
+        horizontal=True
+    )
 
     if sheet_run_mode == "指定列號":
         c1, c2 = st.columns([5, 1])
+
         with c1:
             row_spec = st.text_input("列號（例：2,3,5-8）")
+
         with c2:
             st.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
             force = st.checkbox("強制重跑")
-        execute_btn = st.button("🚀 執行", use_container_width=True, disabled=not st.session_state.is_logged_in)
+
+        execute_btn = st.button(
+            "🚀 執行",
+            use_container_width=True,
+            disabled=not st.session_state.is_logged_in
+        )
+
     else:
         c1, c2 = st.columns(2)
+
         with c1:
-            sheet_summary_btn = st.button("🔍 查詢目前筆數", use_container_width=True, disabled=not st.session_state.is_logged_in)
+            sheet_summary_btn = st.button(
+                "🔍 查詢目前筆數",
+                use_container_width=True,
+                disabled=not st.session_state.is_logged_in
+            )
+
         with c2:
-            sheet_limit = st.number_input("本次處理筆數", min_value=1, value=5)
+            sheet_limit = st.number_input(
+                "本次處理筆數",
+                min_value=1,
+                value=5
+            )
 
         if st.session_state.sheet_summary:
             s = st.session_state.sheet_summary
@@ -404,44 +630,85 @@ if mode == "By Google Sheet":
             m2.metric("未處理筆數", s.get("pending_rows", 0))
             m3.metric("已處理筆數", s.get("done_rows", 0))
 
-        execute_btn = st.button("🚀 執行前 N 筆未處理資料", use_container_width=True, disabled=not st.session_state.is_logged_in)
+        execute_btn = st.button(
+            "🚀 執行前 N 筆未處理資料",
+            use_container_width=True,
+            disabled=not st.session_state.is_logged_in
+        )
 
 elif mode == "By 電話":
-    phone_text = st.text_input("電話號碼（可輸入多筆，用逗號分隔）", placeholder="例：0912345678,0922345678")
-    st.caption("會先找出『目標訂單』，再比對最近一筆可參照的來源訂單。")
+    phone_text = st.text_input(
+        "電話號碼（可輸入多筆，用逗號分隔）",
+        placeholder="例：0912345678,0922345678"
+    )
+
+    st.caption("會先找出「目標訂單」，再比對最近一筆可參照的來源訂單。")
 
     c1, c2 = st.columns(2)
+
     with c1:
-        search_btn = st.button("🔍 查詢列表", use_container_width=True, disabled=not st.session_state.is_logged_in)
+        search_btn = st.button(
+            "🔍 查詢列表",
+            use_container_width=True,
+            disabled=not st.session_state.is_logged_in
+        )
+
     with c2:
-        execute_btn = st.button("🚀 執行勾選項目", use_container_width=True, disabled=not st.session_state.is_logged_in)
+        execute_btn = st.button(
+            "🚀 執行勾選項目",
+            use_container_width=True,
+            disabled=not st.session_state.is_logged_in
+        )
 
 else:
     c1, c2 = st.columns(2)
+
     with c1:
         date_mode = st.selectbox("日期條件", ["服務日期", "購買日期"])
+
     with c2:
-        purchase_status_name = st.selectbox("付款狀態", ["全部", "已付款", "未付款"], index=0)
+        purchase_status_name = st.selectbox(
+            "付款狀態",
+            ["全部", "已付款", "未付款"],
+            index=0
+        )
 
     c3, c4 = st.columns(2)
+
     with c3:
         start_date = st.date_input("開始日期", value=None)
+
     with c4:
         end_date = st.date_input("結束日期", value=None)
 
     st.caption("搜尋條件固定只撈服務狀態＝未處理的目標訂單，再比對最近的可參照來源。")
 
     c5, c6 = st.columns(2)
+
     with c5:
-        search_btn = st.button("🔍 查詢列表", use_container_width=True, disabled=not st.session_state.is_logged_in)
+        search_btn = st.button(
+            "🔍 查詢列表",
+            use_container_width=True,
+            disabled=not st.session_state.is_logged_in
+        )
+
     with c6:
-        execute_btn = st.button("🚀 執行勾選項目", use_container_width=True, disabled=not st.session_state.is_logged_in)
+        execute_btn = st.button(
+            "🚀 執行勾選項目",
+            use_container_width=True,
+            disabled=not st.session_state.is_logged_in
+        )
 
 with st.expander("4. 執行過程", expanded=True):
     log_box = st.empty()
-    log_box.code("\n".join(st.session_state.logs[-3000:]) if st.session_state.logs else "尚未執行")
+    log_box.code(
+        "\n".join(st.session_state.logs[-3000:])
+        if st.session_state.logs
+        else "尚未執行"
+    )
 
 result_container = st.container()
+
 if st.session_state.result is not None:
     render_result(st.session_state.result)
 
@@ -450,12 +717,16 @@ if sheet_summary_btn:
         st.session_state.is_running = True
         reset_before_action(clear_preview=True, clear_selection=True)
         ui_log("===== 查詢目前筆數 =====")
+
         with st.spinner("查詢中，請稍候…"):
             st.session_state.sheet_summary = memo.get_sheet_summary(ui_logger=ui_log)
+
         ui_log("✅ 查詢完成")
+
     except Exception as e:
         ui_log(f"❌ 查詢失敗：{e}")
         st.error(str(e))
+
     finally:
         st.session_state.is_running = False
 
@@ -469,13 +740,16 @@ if search_btn:
             if mode == "By 電話":
                 if not phone_text.strip():
                     raise ValueError("請輸入至少一支電話")
+
                 preview_rows = memo.preview_by_phone_multi(
                     phone_text=phone_text.strip(),
                     ui_logger=ui_log
                 )
+
             else:
                 start_text = start_date.strftime("%Y/%m/%d") if start_date else ""
                 end_text = end_date.strftime("%Y/%m/%d") if end_date else ""
+
                 preview_rows = memo.preview_by_conditions(
                     date_mode=date_mode,
                     date_start=start_text,
@@ -491,10 +765,12 @@ if search_btn:
     except Exception as e:
         ui_log(f"❌ 查詢錯誤：{e}")
         st.error(str(e))
+
     finally:
         st.session_state.is_running = False
 
 selected_ids = []
+
 if mode in ["By 電話", "By 搜尋條件"] and st.session_state.preview_rows:
     st.markdown("---")
     selected_ids = render_preview_blocks(st.session_state.preview_rows)
@@ -506,18 +782,29 @@ if execute_btn:
 
         if mode == "By Google Sheet":
             ui_log("===== 開始執行 =====")
+
             with st.spinner("執行中，請稍候…"):
                 if sheet_run_mode == "指定列號":
-                    result = memo.main(row_spec=row_spec, force=force, ui_logger=ui_log)
+                    result = memo.main(
+                        row_spec=row_spec,
+                        force=force,
+                        ui_logger=ui_log
+                    )
                 else:
-                    result = memo.main_first_n_pending(limit=int(sheet_limit), ui_logger=ui_log)
+                    result = memo.main_first_n_pending(
+                        limit=int(sheet_limit),
+                        ui_logger=ui_log
+                    )
+
         else:
             if not st.session_state.preview_rows:
                 raise RuntimeError("請先查詢列表")
 
             current_selected_ids = []
+
             for row in st.session_state.preview_rows:
                 oid = str(safe_get(row, "order_id", default="")).strip()
+
                 if oid and st.session_state.get(f"pick_{oid}", False):
                     current_selected_ids.append(oid)
 
@@ -528,7 +815,10 @@ if execute_btn:
             ui_log(f"勾選筆數：{len(current_selected_ids)}")
 
             with st.spinner("執行中，請稍候…"):
-                result = memo.main_by_selected_order_ids(order_ids=current_selected_ids, ui_logger=ui_log)
+                result = memo.main_by_selected_order_ids(
+                    order_ids=current_selected_ids,
+                    ui_logger=ui_log
+                )
 
         ui_log("===== 執行完成 =====")
         st.session_state.result = result
@@ -536,7 +826,12 @@ if execute_btn:
 
     except Exception as e:
         ui_log(f"❌ 執行錯誤：{e}")
-        st.session_state.result = {**DEFAULT_RESULT, "failed": 1, "errors": [str(e)]}
+        st.session_state.result = {
+            **DEFAULT_RESULT,
+            "failed": 1,
+            "errors": [str(e)]
+        }
         render_result(st.session_state.result)
+
     finally:
         st.session_state.is_running = False
