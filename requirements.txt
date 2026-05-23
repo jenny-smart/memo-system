@@ -1,5 +1,8 @@
-streamlit
-gspread
-google-auth
-requests
+# requirements.txt 建議先鎖版本
+streamlit==1.40.2
+pandas==2.2.3
+gspread==6.1.4
+google-auth==2.35.0
+google-auth-oauthlib==1.2.1
 beautifulsoup4
+requests
