@@ -5,6 +5,12 @@ import time
 from datetime import datetime
 from typing import Optional, List, Dict, Callable
 
+
+import streamlit as st
+st.set_page_config(page_title="檸檬訂單備忘錄", layout="wide")
+st.title("檸檬訂單備忘錄")
+st.write("App started")
+
 import requests
 from bs4 import BeautifulSoup
 import gspread
