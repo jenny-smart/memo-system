@@ -2,31 +2,46 @@
 # -*- coding: utf-8 -*-
 import re
 import time
-from datetime import datetime
+from datetime import datetime, date, timedelta
 from typing import Optional, List, Dict, Callable
 
-
 import streamlit as st
-st.set_page_config(page_title="檸檬訂單備忘錄", layout="wide")
-st.title("檸檬訂單備忘錄")
-st.write("App started")
-
 import requests
 from bs4 import BeautifulSoup
 import gspread
 from google.oauth2.service_account import Credentials
 
-import env
 
+# -----------------------------------------------------------------------------
+# Config
+# -----------------------------------------------------------------------------
+# Streamlit Cloud 上通常不會有 env.py。原本直接 import env 會造成整個 App 掛掉。
+# 這裡改成：有 env.py 就讀 env.py；沒有就從 st.secrets / 預設值讀。
 try:
-    import streamlit as st
+    import env  # type: ignore
 except Exception:
-    st = None
+    class env:  # type: ignore
+        ENV = "prod"
+        BASE_URL_DEV = "https://backend-dev.lemonclean.com.tw"
+        BASE_URL_PROD = "https://backend.lemonclean.com.tw"
+        WORKSHEET_NAME = "memo"
+        LOG_SHEET_NAME = "memo_log"
+        GOOGLE_SERVICE_ACCOUNT_FILE = ""
+        SLEEP_SECONDS = 0.5
+        SHEET_ID = ""
 
 
-ENV_NAME = getattr(env, "ENV", "prod").lower()
-BASE_URL_DEV = getattr(env, "BASE_URL_DEV", "https://backend-dev.lemonclean.com.tw")
-BASE_URL_PROD = getattr(env, "BASE_URL_PROD", "https://backend.lemonclean.com.tw")
+def secret_value(key: str, default=""):
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
+
+ENV_NAME = str(secret_value("ENV", getattr(env, "ENV", "prod"))).lower()
+BASE_URL_DEV = str(secret_value("BASE_URL_DEV", getattr(env, "BASE_URL_DEV", "https://backend-dev.lemonclean.com.tw")))
+BASE_URL_PROD = str(secret_value("BASE_URL_PROD", getattr(env, "BASE_URL_PROD", "https://backend.lemonclean.com.tw")))
+SHEET_ID = str(secret_value("SHEET_ID", getattr(env, "SHEET_ID", "")))
 
 BASE_URL = ""
 LOGIN_URL = ""
@@ -54,10 +69,10 @@ def set_runtime_credentials(email: str, password: str):
     RUNTIME_PASSWORD = (password or "").strip()
 
 
-WORKSHEET_NAME = getattr(env, "WORKSHEET_NAME", "memo")
-LOG_SHEET_NAME = getattr(env, "LOG_SHEET_NAME", "memo_log")
-GOOGLE_SERVICE_ACCOUNT_FILE = getattr(env, "GOOGLE_SERVICE_ACCOUNT_FILE", "")
-SLEEP_SECONDS = float(getattr(env, "SLEEP_SECONDS", 0.5))
+WORKSHEET_NAME = str(secret_value("WORKSHEET_NAME", getattr(env, "WORKSHEET_NAME", "memo")))
+LOG_SHEET_NAME = str(secret_value("LOG_SHEET_NAME", getattr(env, "LOG_SHEET_NAME", "memo_log")))
+GOOGLE_SERVICE_ACCOUNT_FILE = str(secret_value("GOOGLE_SERVICE_ACCOUNT_FILE", getattr(env, "GOOGLE_SERVICE_ACCOUNT_FILE", "")))
+SLEEP_SECONDS = float(secret_value("SLEEP_SECONDS", getattr(env, "SLEEP_SECONDS", 0.5)))
 
 REQUEST_TIMEOUT = 30
 MAX_RETRIES = 3
@@ -259,7 +274,7 @@ def get_spreadsheet():
                 scopes=scopes,
             )
             gc = gspread.authorize(creds)
-            return gc.open_by_key(env.SHEET_ID)
+            return gc.open_by_key(SHEET_ID)
         except Exception:
             pass
 
@@ -268,7 +283,7 @@ def get_spreadsheet():
         scopes=scopes,
     )
     gc = gspread.authorize(creds)
-    return gc.open_by_key(env.SHEET_ID)
+    return gc.open_by_key(SHEET_ID)
 
 
 def get_ws():
@@ -1532,3 +1547,187 @@ def main_by_selected_order_ids(order_ids, ui_logger=None):
             )
 
     return result
+
+# -----------------------------------------------------------------------------
+# Streamlit UI
+# -----------------------------------------------------------------------------
+def render_result(result: Dict):
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("處理", result.get("processed", 0))
+    c2.metric("成功", result.get("success", 0))
+    c3.metric("失敗", result.get("failed", 0))
+    c4.metric("略過", result.get("skipped", 0))
+    c5.metric("回寫訂單", result.get("updated_orders", 0))
+
+    errors = result.get("errors") or []
+    if errors:
+        st.error("\n".join(map(str, errors[:20])))
+
+
+def render_preview_table(rows: List[Dict], key_prefix: str):
+    if not rows:
+        st.info("沒有查到可預覽資料")
+        return []
+
+    import pandas as pd
+
+    df = pd.DataFrame(rows)
+    show_cols = [
+        "can_autofill",
+        "order_id",
+        "customer_name",
+        "phone",
+        "address",
+        "service_date",
+        "purchase_status_name",
+        "status_name",
+        "source_order_id",
+        "source_service_date",
+        "source_notice_preview",
+    ]
+    show_cols = [c for c in show_cols if c in df.columns]
+    st.dataframe(df[show_cols], use_container_width=True, hide_index=True)
+
+    executable = [r for r in rows if r.get("can_autofill") and r.get("order_id")]
+    if not executable:
+        st.warning("目前沒有可自動回填的訂單")
+        return []
+
+    order_options = [r["order_id"] for r in executable]
+    selected = st.multiselect(
+        "選擇要執行回填的訂單",
+        options=order_options,
+        default=order_options,
+        key=f"{key_prefix}_selected_orders",
+    )
+    return selected
+
+
+def run_app():
+    st.set_page_config(page_title="檸檬訂單備忘錄", layout="wide")
+    st.title("檸檬訂單備忘錄")
+    st.caption("從歷史訂單抓取最近一筆同電話、同地址、已付款、已處理且有客服備註的訂單，回填到目前未處理訂單。")
+
+    if not SHEET_ID:
+        st.warning("尚未設定 SHEET_ID。若要使用 Google Sheet 功能，請到 Streamlit Secrets 加上 SHEET_ID。")
+
+    with st.sidebar:
+        st.header("登入設定")
+        env_choice = st.selectbox("後台環境", ["prod", "dev"], index=0 if ENV_NAME != "dev" else 1)
+        set_env(env_choice)
+
+        default_email = str(secret_value("LEMON_EMAIL", ""))
+        default_password = str(secret_value("LEMON_PASSWORD", ""))
+        email = st.text_input("後台 Email", value=default_email)
+        password = st.text_input("後台 Password", value=default_password, type="password")
+        set_runtime_credentials(email, password)
+
+        st.divider()
+        st.caption(f"目前後台：{BASE_URL}")
+        st.caption(f"工作表：{WORKSHEET_NAME} / Log：{LOG_SHEET_NAME}")
+
+    if not email or not password:
+        st.info("請先在左側輸入後台 Email / Password，或在 Streamlit Secrets 設定 LEMON_EMAIL、LEMON_PASSWORD。")
+        return
+
+    log_box = st.expander("執行 LOG", expanded=True)
+    log_placeholder = log_box.empty()
+    logs: List[str] = []
+
+    def ui_logger(msg: str):
+        logs.append(str(msg))
+        log_placeholder.code("\n".join(logs[-300:]))
+
+    tab1, tab2, tab3, tab4 = st.tabs(["依電話預覽/回填", "依條件預覽/回填", "依 Sheet 列號", "Sheet 摘要"])
+
+    with tab1:
+        st.subheader("依電話查詢")
+        phone_text = st.text_area("電話，可輸入多支，以逗號或換行分隔", height=100)
+
+        if st.button("預覽電話訂單", type="primary"):
+            try:
+                rows = preview_by_phone_multi(phone_text, ui_logger=ui_logger)
+                st.session_state["phone_preview_rows"] = rows
+                st.success(f"預覽完成，共 {len(rows)} 筆")
+            except Exception as e:
+                st.error(str(e))
+
+        selected_orders = render_preview_table(st.session_state.get("phone_preview_rows", []), "phone")
+        if st.button("執行勾選回填", disabled=not bool(selected_orders)):
+            try:
+                result = main_by_selected_order_ids(selected_orders, ui_logger=ui_logger)
+                render_result(result)
+            except Exception as e:
+                st.error(str(e))
+
+    with tab2:
+        st.subheader("依搜尋條件查詢未處理訂單")
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            date_mode = st.selectbox("日期條件", ["服務日期", "訂單日期"])
+        with c2:
+            date_start = st.date_input("開始日期", value=date.today())
+        with c3:
+            date_end = st.date_input("結束日期", value=date.today() + timedelta(days=7))
+        with c4:
+            purchase_status_name = st.selectbox("付款狀態", ["全部", "未付款", "已付款"])
+
+        if st.button("預覽條件訂單", type="primary"):
+            try:
+                rows = preview_by_conditions(
+                    date_mode=date_mode,
+                    date_start=date_start.strftime("%Y/%m/%d"),
+                    date_end=date_end.strftime("%Y/%m/%d"),
+                    purchase_status_name=purchase_status_name,
+                    ui_logger=ui_logger,
+                )
+                st.session_state["condition_preview_rows"] = rows
+                st.success(f"預覽完成，共 {len(rows)} 筆")
+            except Exception as e:
+                st.error(str(e))
+
+        selected_orders = render_preview_table(st.session_state.get("condition_preview_rows", []), "condition")
+        if st.button("執行條件勾選回填", disabled=not bool(selected_orders)):
+            try:
+                result = main_by_selected_order_ids(selected_orders, ui_logger=ui_logger)
+                render_result(result)
+            except Exception as e:
+                st.error(str(e))
+
+    with tab3:
+        st.subheader("依 Google Sheet 列號執行")
+        row_spec = st.text_input("列號，例如 2 或 2,5,8 或 2-10", value="2")
+        force = st.checkbox("強制執行：即使 V 欄已有狀態也處理", value=False)
+
+        c1, c2 = st.columns(2)
+        with c1:
+            if st.button("執行指定列", type="primary"):
+                try:
+                    result = main(row_spec=row_spec, force=force, ui_logger=ui_logger)
+                    render_result(result)
+                except Exception as e:
+                    st.error(str(e))
+        with c2:
+            limit = st.number_input("執行前 N 筆未處理", min_value=1, max_value=100, value=5, step=1)
+            if st.button("執行前 N 筆"):
+                try:
+                    result = main_first_n_pending(int(limit), ui_logger=ui_logger)
+                    render_result(result)
+                except Exception as e:
+                    st.error(str(e))
+
+    with tab4:
+        st.subheader("Sheet 摘要")
+        if st.button("讀取摘要"):
+            try:
+                summary = get_sheet_summary(ui_logger=ui_logger)
+                c1, c2, c3 = st.columns(3)
+                c1.metric("總筆數", summary["total_rows"])
+                c2.metric("未處理", summary["pending_rows"])
+                c3.metric("已處理", summary["done_rows"])
+            except Exception as e:
+                st.error(str(e))
+
+
+if __name__ == "__main__":
+    run_app()
