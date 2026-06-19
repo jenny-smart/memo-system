@@ -1339,21 +1339,6 @@ def render_clear_shift_section():
         key="clear_shift_mode",
     )
 
-    with st.expander("執行 LOG", expanded=True):
-        log_box_local = st.empty()
-        log_box_local.code(
-            "\n".join(st.session_state.logs[-3000:])
-            if st.session_state.logs
-            else "尚未執行"
-        )
-
-    def clear_ui_log(msg):
-        st.session_state.logs.append(str(msg))
-        try:
-            log_box_local.code("\n".join(st.session_state.logs[-3000:]))
-        except Exception:
-            pass
-
     # --------------------------------------------------------
     # 模式一：手動清空某人 / 某段期間
     # --------------------------------------------------------
@@ -1394,6 +1379,21 @@ def render_clear_shift_section():
             use_container_width=True,
             disabled=not (st.session_state.is_logged_in and bool(target_names)),
         )
+
+        with st.expander("執行 LOG", expanded=True):
+            log_box_local = st.empty()
+            log_box_local.code(
+                "\n".join(st.session_state.logs[-3000:])
+                if st.session_state.logs
+                else "尚未執行"
+            )
+
+        def clear_ui_log(msg):
+            st.session_state.logs.append(str(msg))
+            try:
+                log_box_local.code("\n".join(st.session_state.logs[-3000:]))
+            except Exception:
+                pass
 
         if st.session_state.clear_person_result is not None:
             results = st.session_state.clear_person_result
@@ -1469,6 +1469,21 @@ def render_clear_shift_section():
             use_container_width=True,
             disabled=not st.session_state.is_logged_in,
         )
+
+        with st.expander("執行 LOG", expanded=True):
+            log_box_local = st.empty()
+            log_box_local.code(
+                "\n".join(st.session_state.logs[-3000:])
+                if st.session_state.logs
+                else "尚未執行"
+            )
+
+        def clear_ui_log(msg):
+            st.session_state.logs.append(str(msg))
+            try:
+                log_box_local.code("\n".join(st.session_state.logs[-3000:]))
+            except Exception:
+                pass
 
         if scan_btn:
             try:
