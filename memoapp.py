@@ -3,6 +3,7 @@
 import streamlit as st
 import memo
 import shift
+import atm
 
 st.set_page_config(
     page_title="Memo 自動回填系統",
@@ -330,6 +331,7 @@ DEFAULT_STATE = {
     "shift_import_rows": [],
     "shift_dry_run_result": None,
     "lemon_candidate": None,
+    "atm_result": None,
 }
 
 for k, v in DEFAULT_STATE.items():
@@ -371,6 +373,28 @@ def render_result(result):
         c3.metric("失敗", r["failed"])
         c4.metric("略過", r["skipped"])
         c5.metric("回寫筆數", r["updated_orders"])
+
+        if r["errors"]:
+            with st.expander(f"⚠️ 錯誤明細（{len(r['errors'])} 筆）", expanded=True):
+                for i, err in enumerate(r["errors"], 1):
+                    st.markdown(f"**{i}.** {err}")
+        elif r["processed"] > 0:
+            st.success(f"✅ 全部完成，共處理 {r['processed']} 筆，成功 {r['success']} 筆。")
+        else:
+            st.info("執行完成，無資料被處理。")
+
+
+def render_atm_result(result, container):
+    r = normalize_result(result)
+    with container:
+        st.markdown("---")
+        step("3", "執行結果")
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("執行筆數", r["processed"])
+        c2.metric("成功", r["success"])
+        c3.metric("失敗", r["failed"])
+        c4.metric("略過", r["skipped"])
 
         if r["errors"]:
             with st.expander(f"⚠️ 錯誤明細（{len(r['errors'])} 筆）", expanded=True):
@@ -560,7 +584,7 @@ st.markdown("""
   <div class="hero-emoji">📝</div>
   <div>
     <div class="hero-title">檸檬訂單備忘錄</div>
-    <div class="hero-sub">從歷史訂單抓取最近一筆同電話、同地址、已付款、已處理且有客服備註的訂單，回填到目前未處理訂單。同時整合排班勾選與檸檬人空檔自動分配。</div>
+    <div class="hero-sub">從歷史訂單抓取最近一筆同電話、同地址、已付款、已處理且有客服備註的訂單，回填到目前未處理訂單。同時整合排班勾選、檸檬人空檔自動分配與 ATM 對帳。</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -571,13 +595,13 @@ st.markdown("""
 
 app_section = st.radio(
     "功能",
-    ["Memo 自動回填", "排班勾選（匯入檔）", "檸檬人空檔勾選"],
+    ["Memo 自動回填", "排班勾選（匯入檔）", "檸檬人空檔勾選", "ATM 對帳"],
     horizontal=True,
     label_visibility="collapsed",
 )
 
 # ============================================================
-# Step 1：登入與環境設定（三個功能共用同一組登入狀態）
+# Step 1：登入與環境設定（四個功能共用同一組登入狀態）
 # ============================================================
 
 step("1", "登入與環境設定")
@@ -1189,6 +1213,106 @@ def render_lemon_ren_section():
 
 
 # ============================================================
+# 功能四：ATM 對帳
+# ============================================================
+
+def render_atm_section():
+    step("2", "設定要處理的 ATM 對帳列")
+
+    st.markdown(
+        '<div class="info-strip">會依序對每一列：搜尋訂單 → 按已付款 → 開立發票 → 發確認信，'
+        '完成後把付款時間 / 發票號碼回填到 P / Q 欄，並把 R 欄填上「已發送」。</div>',
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        '<div class="warn-strip">⚠️ 這三個動作（尤其是發確認信）都是「點了就送出」，沒有預覽機制，輸入列號後按執行就會直接全部跑，請務必先確認列號正確再送出。</div>',
+        unsafe_allow_html=True
+    )
+
+    c1, c2 = st.columns([1, 3])
+
+    with c1:
+        region = st.selectbox("地區", ["台北", "台中"])
+
+    with c2:
+        row_spec = st.text_input(
+            "列號",
+            placeholder="支援：單列 2、逗號分隔 2,3,5、區間 2,3,5-7，例：241,243,246-248"
+        )
+
+    st.markdown("<div style='height:4px'></div>", unsafe_allow_html=True)
+
+    c3, c4, c5 = st.columns(3)
+
+    with c3:
+        do_mark_paid = st.checkbox("按已付款", value=True)
+
+    with c4:
+        do_issue_invoice = st.checkbox("開立發票", value=True)
+
+    with c5:
+        do_send_mail = st.checkbox("發確認信", value=True)
+
+    execute_btn = st.button(
+        "🚀 執行",
+        use_container_width=True,
+        disabled=not (st.session_state.is_logged_in and bool(row_spec.strip())),
+    )
+
+    with st.expander("執行 LOG", expanded=True):
+        log_box_local = st.empty()
+        log_box_local.code(
+            "\n".join(st.session_state.logs[-3000:])
+            if st.session_state.logs
+            else "尚未執行"
+        )
+
+    def atm_ui_log(msg):
+        st.session_state.logs.append(str(msg))
+        try:
+            log_box_local.code("\n".join(st.session_state.logs[-3000:]))
+        except Exception:
+            pass
+
+    atm_result_container = st.container()
+
+    if st.session_state.atm_result is not None:
+        render_atm_result(st.session_state.atm_result, atm_result_container)
+
+    if execute_btn:
+        try:
+            st.session_state.logs = []
+            st.session_state.atm_result = None
+            atm_ui_log(f"===== 開始處理 ATM 對帳（{region}）=====")
+
+            if not (do_mark_paid or do_issue_invoice or do_send_mail):
+                raise ValueError("請至少勾選一項要執行的動作")
+
+            with st.spinner("執行中，請稍候…"):
+                result = atm.process_atm_rows(
+                    region=region,
+                    row_spec=row_spec,
+                    do_mark_paid=do_mark_paid,
+                    do_issue_invoice=do_issue_invoice,
+                    do_send_mail=do_send_mail,
+                    ui_logger=atm_ui_log,
+                )
+
+            atm_ui_log("===== 執行完成 =====")
+            st.session_state.atm_result = result
+            render_atm_result(result, atm_result_container)
+
+        except Exception as e:
+            atm_ui_log(f"❌ 執行錯誤：{e}")
+            st.session_state.atm_result = {
+                **DEFAULT_RESULT,
+                "failed": 1,
+                "errors": [str(e)],
+            }
+            render_atm_result(st.session_state.atm_result, atm_result_container)
+
+
+# ============================================================
 # 依目前選擇的功能渲染對應區塊
 # ============================================================
 
@@ -1196,5 +1320,7 @@ if app_section == "Memo 自動回填":
     render_memo_section()
 elif app_section == "排班勾選（匯入檔）":
     render_shift_import_section()
-else:
+elif app_section == "檸檬人空檔勾選":
     render_lemon_ren_section()
+else:
+    render_atm_section()
