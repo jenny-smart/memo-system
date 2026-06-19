@@ -332,6 +332,9 @@ DEFAULT_STATE = {
     "shift_dry_run_result": None,
     "lemon_candidate": None,
     "atm_result": None,
+    "clear_person_result": None,
+    "lemon_scan_entries": None,
+    "lemon_clear_results": None,
 }
 
 for k, v in DEFAULT_STATE.items():
@@ -595,7 +598,7 @@ st.markdown("""
 
 app_section = st.radio(
     "功能",
-    ["Memo 自動回填", "排班勾選（匯入檔）", "檸檬人空檔勾選", "ATM 對帳"],
+    ["Memo 自動回填", "排班勾選（匯入檔）", "檸檬人空檔勾選", "ATM 對帳", "清空排班"],
     horizontal=True,
     label_visibility="collapsed",
 )
@@ -1313,6 +1316,218 @@ def render_atm_section():
 
 
 # ============================================================
+# 功能五：清空排班
+# ============================================================
+
+def render_clear_shift_section():
+    clear_mode = st.radio(
+        "",
+        ["手動清空（某人 / 某段期間）", "自動清除候補檸檬人（從未配班清單）"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="clear_shift_mode",
+    )
+
+    with st.expander("執行 LOG", expanded=True):
+        log_box_local = st.empty()
+        log_box_local.code(
+            "\n".join(st.session_state.logs[-3000:])
+            if st.session_state.logs
+            else "尚未執行"
+        )
+
+    def clear_ui_log(msg):
+        st.session_state.logs.append(str(msg))
+        try:
+            log_box_local.code("\n".join(st.session_state.logs[-3000:]))
+        except Exception:
+            pass
+
+    # --------------------------------------------------------
+    # 模式一：手動清空某人 / 某段期間
+    # --------------------------------------------------------
+    if clear_mode == "手動清空（某人 / 某段期間）":
+        step("2", "設定要清空的人員與期間")
+
+        st.markdown(
+            '<div class="info-strip">輸入專員姓名（含檸檬人，例如「檸檬人3」「檸檬人甲」），'
+            '會把該人員在指定期間內，每一天的 全天/上午/下午/晚上 四個時段全部清空並儲存。</div>',
+            unsafe_allow_html=True
+        )
+        st.markdown(
+            '<div class="warn-strip">⚠️ 這個動作會直接覆寫後台真實排班資料，且沒有預覽機制，請務必確認姓名與日期區間正確再執行。</div>',
+            unsafe_allow_html=True
+        )
+
+        c1, c2, c3 = st.columns([2, 1.3, 1.3])
+
+        with c1:
+            target_name = st.text_input("人員姓名", placeholder="例如：蔡立娟 或 檸檬人3")
+
+        with c2:
+            range_start = st.date_input("開始日期", key="clear_range_start")
+
+        with c3:
+            range_end = st.date_input("結束日期", key="clear_range_end")
+
+        execute_btn = st.button(
+            "🚀 執行清空",
+            use_container_width=True,
+            disabled=not (st.session_state.is_logged_in and bool(target_name.strip())),
+        )
+
+        if st.session_state.clear_person_result is not None:
+            r = st.session_state.clear_person_result
+            st.markdown("---")
+            step("3", "執行結果")
+
+            c1, c2, c3 = st.columns(3)
+            c1.metric("清到資料的天數", len(r.get("cleared_dates", [])))
+            c2.metric("原本就沒勾選的天數", len(r.get("untouched_dates", [])))
+            c3.metric("移除的勾選筆數", r.get("cleared_slot_count", 0))
+
+            if r.get("errors"):
+                with st.expander(f"⚠️ 錯誤明細（{len(r['errors'])} 筆）", expanded=True):
+                    for i, err in enumerate(r["errors"], 1):
+                        st.markdown(f"**{i}.** {err}")
+            else:
+                st.success(f"✅ 已清空「{r.get('name', '')}」指定期間的排班。")
+
+        if execute_btn:
+            try:
+                st.session_state.logs = []
+                st.session_state.clear_person_result = None
+                clear_ui_log(f"===== 開始清空「{target_name}」的排班 =====")
+
+                with st.spinner("執行中，請稍候…"):
+                    session = memo.login(ui_logger=clear_ui_log)
+                    result = shift.clear_person_shift_range(
+                        session=session,
+                        name=target_name.strip(),
+                        date_start=range_start.strftime("%Y-%m-%d"),
+                        date_end=range_end.strftime("%Y-%m-%d"),
+                        ui_logger=clear_ui_log,
+                    )
+
+                clear_ui_log("===== 執行完成 =====")
+                st.session_state.clear_person_result = result
+                st.rerun()
+
+            except Exception as e:
+                clear_ui_log(f"❌ 執行錯誤：{e}")
+                st.error(str(e))
+
+    # --------------------------------------------------------
+    # 模式二：自動清除候補檸檬人（從未配班清單）
+    # --------------------------------------------------------
+    else:
+        step("2", "設定要掃描的週次")
+
+        st.markdown(
+            '<div class="info-strip">輸入該週任一天的日期，會抓清潔班表（每頁一週）裡每一天「未配班」灰底清單，'
+            '找出裡面出現的檸檬人（代表檸檬人目前佔用著該時段），先列出來給你確認，再決定要不要清空。</div>',
+            unsafe_allow_html=True
+        )
+
+        scan_date = st.date_input("週次內任一天的日期", key="lemon_scan_date")
+
+        scan_btn = st.button(
+            "🔍 掃描未配班清單",
+            use_container_width=True,
+            disabled=not st.session_state.is_logged_in,
+        )
+
+        if scan_btn:
+            try:
+                st.session_state.logs = []
+                st.session_state.lemon_scan_entries = None
+                st.session_state.lemon_clear_results = None
+                clear_ui_log("===== 開始掃描未配班清單中的檸檬人 =====")
+
+                with st.spinner("掃描中，請稍候…"):
+                    session = memo.login(ui_logger=clear_ui_log)
+                    entries = shift.find_unassigned_lemon_bookings(
+                        session=session,
+                        query_date=scan_date.strftime("%Y-%m-%d"),
+                        ui_logger=clear_ui_log,
+                    )
+
+                st.session_state.lemon_scan_entries = entries
+                clear_ui_log("===== 掃描完成 =====")
+                st.rerun()
+
+            except Exception as e:
+                clear_ui_log(f"❌ 掃描失敗：{e}")
+                st.error(str(e))
+
+        entries = st.session_state.lemon_scan_entries
+
+        if entries is not None:
+            st.markdown("---")
+            step("3", "掃描結果")
+
+            if not entries:
+                st.info("這一週的未配班清單裡沒有發現檸檬人。")
+            else:
+                by_name = {}
+                for e in entries:
+                    by_name.setdefault(e["name"], []).append(e["date"])
+
+                st.metric("發現的檸檬人數", len(by_name))
+
+                for name, dates in by_name.items():
+                    st.markdown(f"""
+                    <div class="preview-card preview-ok">
+                        <div class="preview-title">{name}</div>
+                        <div class="preview-sub"><b>佔用日期：</b>{"、".join(sorted(set(dates)))}</div>
+                    </div>
+                    """, unsafe_allow_html=True)
+
+                st.markdown(
+                    '<div class="warn-strip">⚠️ 確認執行後，會把上面每個檸檬人在列出的日期，整天（全天/上午/下午/晚上）的勾選全部清空並儲存，沒有逐筆預覽機制。</div>',
+                    unsafe_allow_html=True
+                )
+
+                confirm_btn = st.button(
+                    "🚀 確認清空以上檸檬人佔用的時段",
+                    type="primary",
+                    use_container_width=True,
+                )
+
+                if confirm_btn:
+                    try:
+                        clear_ui_log("===== 開始清空候補檸檬人佔用的時段 =====")
+                        with st.spinner("清空中，請稍候…"):
+                            session = memo.login(ui_logger=clear_ui_log)
+                            results = shift.clear_unassigned_lemon_bookings(
+                                session=session,
+                                entries=entries,
+                                ui_logger=clear_ui_log,
+                            )
+
+                        st.session_state.lemon_clear_results = results
+                        clear_ui_log("===== 清空完成 =====")
+                        st.rerun()
+
+                    except Exception as e:
+                        clear_ui_log(f"❌ 清空失敗：{e}")
+                        st.error(str(e))
+
+        if st.session_state.lemon_clear_results is not None:
+            st.markdown("---")
+            step("4", "清空結果")
+
+            for r in st.session_state.lemon_clear_results:
+                if r.get("errors"):
+                    st.error(f"❌ {r['name']}：{'；'.join(r['errors'])}")
+                else:
+                    st.success(
+                        f"✅ {r['name']}：清空 {len(r.get('cleared_dates', []))} 天，"
+                        f"移除 {r.get('cleared_slot_count', 0)} 筆勾選"
+                    )
+
+
+# ============================================================
 # 依目前選擇的功能渲染對應區塊
 # ============================================================
 
@@ -1322,5 +1537,7 @@ elif app_section == "排班勾選（匯入檔）":
     render_shift_import_section()
 elif app_section == "檸檬人空檔勾選":
     render_lemon_ren_section()
-else:
+elif app_section == "ATM 對帳":
     render_atm_section()
+else:
+    render_clear_shift_section()
