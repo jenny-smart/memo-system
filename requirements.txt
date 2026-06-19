@@ -5,3 +5,4 @@ google-auth==2.35.0
 google-auth-oauthlib==1.2.1
 beautifulsoup4==4.12.3
 requests==2.32.3
+python-3.11
