@@ -1,6 +1,7 @@
 # memoapp.py
 # -*- coding: utf-8 -*-
 import streamlit as st
+import re
 import memo
 import shift
 import atm
@@ -368,7 +369,7 @@ def render_result(result):
     r = normalize_result(result)
     with result_container:
         st.markdown("---")
-        step("5", "執行結果")
+        step("6", "執行結果")
 
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("執行筆數", r["processed"])
@@ -391,7 +392,7 @@ def render_atm_result(result, container):
     r = normalize_result(result)
     with container:
         st.markdown("---")
-        step("3", "執行結果")
+        step("4", "執行結果")
 
         c1, c2, c3, c4 = st.columns(4)
         c1.metric("執行筆數", r["processed"])
@@ -469,7 +470,7 @@ def reset_mode_state_if_changed(current_mode):
 
 
 def render_preview_blocks(rows):
-    step("3", "查詢結果預覽")
+    step("4", "查詢結果預覽")
 
     if not rows:
         st.info("查無資料")
@@ -570,7 +571,7 @@ def render_preview_blocks(rows):
     render_section("無可參照來源", no_rows, "no_source", False)
 
     st.markdown("---")
-    step("4", "執行確認")
+    step("5", "執行確認")
 
     st.metric("目前勾選", len(selected_ids))
     st.caption("執行後會把來源客服備註寫入目標訂單，並把目標訂單服務狀態改為已處理。")
@@ -587,94 +588,104 @@ st.markdown("""
   <div class="hero-emoji">📝</div>
   <div>
     <div class="hero-title">檸檬訂單備忘錄</div>
-    <div class="hero-sub">從歷史訂單抓取最近一筆同電話、同地址、已付款、已處理且有客服備註的訂單，回填到目前未處理訂單。同時整合排班勾選、檸檬人空檔自動分配與 ATM 對帳。</div>
+    <div class="hero-sub">Memo 回填・排班管理・ATM 對帳 整合工具</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
 # ============================================================
-# 功能切換
+# Step 1：登入與環境設定（所有功能共用同一組登入狀態）
+# 已登入後改成摺疊狀態，畫面比較乾淨；要換帳號再展開即可。
 # ============================================================
 
-app_section = st.radio(
+step("1", "登入")
+
+login_expanded = not st.session_state.is_logged_in
+
+with st.expander(
+    f"✅ 已登入：{st.session_state.login_identity}" if st.session_state.is_logged_in else "🔐 尚未登入，請輸入帳密",
+    expanded=login_expanded,
+):
+    col_e, col_p, col_env = st.columns([2.4, 2.4, 1.2])
+
+    with col_e:
+        email = st.text_input("後台帳號", placeholder="jenny@lemonclean.com.tw")
+
+    with col_p:
+        password = st.text_input("後台密碼", type="password")
+
+    with col_env:
+        env_option = st.selectbox("環境", ["prod", "dev"], index=0)
+
+    memo.set_env(env_option)
+
+    col_login, col_unlock = st.columns(2)
+
+    with col_login:
+        login_clicked = st.button("🔐 Login", use_container_width=True)
+
+    with col_unlock:
+        unlock_clicked = st.button("解除鎖定", use_container_width=True)
+
+    if unlock_clicked:
+        st.session_state.is_running = False
+        st.session_state.logs = []
+        st.success("已解除鎖定")
+
+    if login_clicked:
+        try:
+            reset_before_action(clear_preview=True, clear_selection=True)
+
+            if not email or not password:
+                st.error("請先輸入 Email / Password")
+            else:
+                st.session_state.is_running = True
+                ui_log("===== 開始登入 =====")
+                memo.set_env(env_option)
+                memo.set_runtime_credentials(email, password)
+
+                with st.spinner("登入中，請稍候…"):
+                    memo.login(ui_logger=ui_log)
+
+                st.session_state.is_logged_in = True
+                st.session_state.login_identity = email
+                ui_log("✅ Login 成功")
+                st.success("登入成功，請往下選擇功能。")
+                st.rerun()
+
+        except Exception as e:
+            st.session_state.is_logged_in = False
+            st.session_state.login_identity = ""
+            ui_log(f"❌ Login 失敗：{e}")
+            st.error(f"登入失敗：{e}")
+        finally:
+            st.session_state.is_running = False
+
+if not st.session_state.is_logged_in:
+    st.markdown(
+        '<div class="info-strip">⚠️ 尚未登入，請先在上方輸入帳密並點擊 Login，才能使用下方功能。</div>',
+        unsafe_allow_html=True
+    )
+
+st.markdown("---")
+
+# ============================================================
+# Step 2：選擇功能（排班相關功能放一起，ATM 對帳放最後）
+# ============================================================
+
+step("2", "選擇功能")
+
+app_section = st.selectbox(
     "功能",
-    ["Memo 自動回填", "排班勾選（匯入檔）", "檸檬人空檔勾選", "ATM 對帳", "清空排班"],
-    horizontal=True,
+    [
+        "Memo 自動回填",
+        "排班勾選（匯入檔）",
+        "檸檬人空檔勾選",
+        "清空排班",
+        "ATM 對帳",
+    ],
     label_visibility="collapsed",
 )
-
-# ============================================================
-# Step 1：登入與環境設定（四個功能共用同一組登入狀態）
-# ============================================================
-
-step("1", "登入與環境設定")
-
-col_e, col_p, col_env = st.columns([2.4, 2.4, 1.2])
-
-with col_e:
-    email = st.text_input("後台帳號", placeholder="jenny@lemonclean.com.tw")
-
-with col_p:
-    password = st.text_input("後台密碼", type="password")
-
-with col_env:
-    env_option = st.selectbox("環境", ["prod", "dev"], index=0)
-
-memo.set_env(env_option)
-
-col_login, col_unlock, col_status = st.columns([1, 1, 4])
-
-with col_login:
-    login_clicked = st.button("🔐 Login", use_container_width=True)
-
-with col_unlock:
-    unlock_clicked = st.button("解除鎖定", use_container_width=True)
-
-if unlock_clicked:
-    st.session_state.is_running = False
-    st.session_state.logs = []
-    st.success("已解除鎖定")
-
-if login_clicked:
-    try:
-        reset_before_action(clear_preview=True, clear_selection=True)
-
-        if not email or not password:
-            st.error("請先輸入 Email / Password")
-        else:
-            st.session_state.is_running = True
-            ui_log("===== 開始登入 =====")
-            memo.set_env(env_option)
-            memo.set_runtime_credentials(email, password)
-
-            with st.spinner("登入中，請稍候…"):
-                memo.login(ui_logger=ui_log)
-
-            st.session_state.is_logged_in = True
-            st.session_state.login_identity = email
-            ui_log("✅ Login 成功")
-            st.success("登入成功，請往下設定查詢條件。")
-
-    except Exception as e:
-        st.session_state.is_logged_in = False
-        st.session_state.login_identity = ""
-        ui_log(f"❌ Login 失敗：{e}")
-        st.error(f"登入失敗：{e}")
-    finally:
-        st.session_state.is_running = False
-
-with col_status:
-    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
-    if st.session_state.is_logged_in:
-        st.markdown(
-            f'<div class="info-strip">✅ 已登入：<strong>{st.session_state.login_identity}</strong>（環境：<code>{env_option}</code>）</div>',
-            unsafe_allow_html=True
-        )
-    else:
-        st.markdown(
-            '<div class="info-strip">⚠️ 尚未登入，請先輸入帳密並點擊 Login。</div>',
-            unsafe_allow_html=True
-        )
 
 st.markdown("---")
 
@@ -684,7 +695,7 @@ st.markdown("---")
 # ============================================================
 
 def render_memo_section():
-    step("2", "設定查詢條件")
+    step("3", "設定查詢條件")
 
     mode = st.radio(
         "",
@@ -975,7 +986,7 @@ def render_memo_section():
 # ============================================================
 
 def render_shift_import_section():
-    step("2", "上傳排班匯入檔")
+    step("3", "上傳排班匯入檔")
 
     st.markdown(
         '<div class="info-strip">欄位需求：<code>地區</code> / <code>日期</code> / <code>類型</code> / <code>時段</code> / <code>名稱</code>。'
@@ -1045,7 +1056,7 @@ def render_shift_import_section():
         result = st.session_state.shift_dry_run_result
 
         st.markdown("---")
-        step("3", "Dry Run 結果預覽")
+        step("4", "Dry Run 結果預覽")
 
         m1, m2, m3 = st.columns(3)
         m1.metric("處理人數", result.get("processed_people", 0))
@@ -1094,7 +1105,7 @@ def render_shift_import_section():
 # ============================================================
 
 def render_lemon_ren_section():
-    step("2", "設定要找空檔的日期與類型")
+    step("3", "設定要找空檔的日期與類型")
 
     st.markdown(
         '<div class="info-strip">會依序檢查 檸檬人1 ~ 檸檬人N，找出「該日期、該類型對應的時段」目前沒有被勾選的第一位，'
@@ -1164,7 +1175,7 @@ def render_lemon_ren_section():
 
     if candidate:
         st.markdown("---")
-        step("3", "查詢結果")
+        step("4", "查詢結果")
 
         if candidate.get("found"):
             checked_names = ", ".join(c["name"] for c in candidate.get("checked_candidates", [])) or "無，第一位就是空的"
@@ -1220,7 +1231,7 @@ def render_lemon_ren_section():
 # ============================================================
 
 def render_atm_section():
-    step("2", "設定要處理的 ATM 對帳列")
+    step("3", "設定要處理的 ATM 對帳列")
 
     st.markdown(
         '<div class="info-strip">會依序對每一列：搜尋訂單 → 按已付款 → 開立發票 → 發確認信，'
@@ -1347,11 +1358,11 @@ def render_clear_shift_section():
     # 模式一：手動清空某人 / 某段期間
     # --------------------------------------------------------
     if clear_mode == "手動清空（某人 / 某段期間）":
-        step("2", "設定要清空的人員與期間")
+        step("3", "設定要清空的人員與期間")
 
         st.markdown(
-            '<div class="info-strip">輸入專員姓名（含檸檬人，例如「檸檬人3」「檸檬人甲」），'
-            '會把該人員在指定期間內，每一天的 全天/上午/下午/晚上 四個時段全部清空並儲存。</div>',
+            '<div class="info-strip">輸入專員姓名（含檸檬人，例如「檸檬人3」「檸檬人甲」），可用逗號分隔輸入多人'
+            '（例如「檸檬人2,檸檬人4」），會把每個人在指定期間內，每一天的 全天/上午/下午/晚上 四個時段全部清空並儲存。</div>',
             unsafe_allow_html=True
         )
         st.markdown(
@@ -1362,7 +1373,10 @@ def render_clear_shift_section():
         c1, c2, c3 = st.columns([2, 1.3, 1.3])
 
         with c1:
-            target_name = st.text_input("人員姓名", placeholder="例如：蔡立娟 或 檸檬人3")
+            target_names_raw = st.text_input(
+                "人員姓名",
+                placeholder="例如：蔡立娟 或 檸檬人3，多人用逗號分隔：檸檬人2,檸檬人4"
+            )
 
         with c2:
             range_start = st.date_input("開始日期", key="clear_range_start")
@@ -1370,47 +1384,64 @@ def render_clear_shift_section():
         with c3:
             range_end = st.date_input("結束日期", key="clear_range_end")
 
+        target_names = [n.strip() for n in re.split(r"[,，]", target_names_raw) if n.strip()]
+
+        if len(target_names) > 1:
+            st.caption(f"將清空 {len(target_names)} 人：{'、'.join(target_names)}")
+
         execute_btn = st.button(
             "🚀 執行清空",
             use_container_width=True,
-            disabled=not (st.session_state.is_logged_in and bool(target_name.strip())),
+            disabled=not (st.session_state.is_logged_in and bool(target_names)),
         )
 
         if st.session_state.clear_person_result is not None:
-            r = st.session_state.clear_person_result
+            results = st.session_state.clear_person_result
             st.markdown("---")
-            step("3", "執行結果")
+            step("4", "執行結果")
+
+            total_cleared_dates = sum(len(r.get("cleared_dates", [])) for r in results)
+            total_untouched = sum(len(r.get("untouched_dates", [])) for r in results)
+            total_slots = sum(r.get("cleared_slot_count", 0) for r in results)
 
             c1, c2, c3 = st.columns(3)
-            c1.metric("清到資料的天數", len(r.get("cleared_dates", [])))
-            c2.metric("原本就沒勾選的天數", len(r.get("untouched_dates", [])))
-            c3.metric("移除的勾選筆數", r.get("cleared_slot_count", 0))
+            c1.metric("清到資料的天數", total_cleared_dates)
+            c2.metric("原本就沒勾選的天數", total_untouched)
+            c3.metric("移除的勾選筆數", total_slots)
 
-            if r.get("errors"):
-                with st.expander(f"⚠️ 錯誤明細（{len(r['errors'])} 筆）", expanded=True):
-                    for i, err in enumerate(r["errors"], 1):
-                        st.markdown(f"**{i}.** {err}")
-            else:
-                st.success(f"✅ 已清空「{r.get('name', '')}」指定期間的排班。")
+            for r in results:
+                if r.get("errors"):
+                    with st.expander(f"⚠️ 「{r.get('name', '')}」錯誤明細（{len(r['errors'])} 筆）", expanded=True):
+                        for i, err in enumerate(r["errors"], 1):
+                            st.markdown(f"**{i}.** {err}")
+                else:
+                    st.success(
+                        f"✅ 已清空「{r.get('name', '')}」指定期間的排班"
+                        f"（{len(r.get('cleared_dates', []))} 天有清到資料）。"
+                    )
 
         if execute_btn:
             try:
                 st.session_state.logs = []
                 st.session_state.clear_person_result = None
-                clear_ui_log(f"===== 開始清空「{target_name}」的排班 =====")
+                clear_ui_log(f"===== 開始清空 {len(target_names)} 人的排班：{'、'.join(target_names)} =====")
 
+                results = []
                 with st.spinner("執行中，請稍候…"):
                     session = memo.login(ui_logger=clear_ui_log)
-                    result = shift.clear_person_shift_range(
-                        session=session,
-                        name=target_name.strip(),
-                        date_start=range_start.strftime("%Y-%m-%d"),
-                        date_end=range_end.strftime("%Y-%m-%d"),
-                        ui_logger=clear_ui_log,
-                    )
+                    for n in target_names:
+                        clear_ui_log(f"\n----- 清空「{n}」-----")
+                        result = shift.clear_person_shift_range(
+                            session=session,
+                            name=n,
+                            date_start=range_start.strftime("%Y-%m-%d"),
+                            date_end=range_end.strftime("%Y-%m-%d"),
+                            ui_logger=clear_ui_log,
+                        )
+                        results.append(result)
 
                 clear_ui_log("===== 執行完成 =====")
-                st.session_state.clear_person_result = result
+                st.session_state.clear_person_result = results
                 st.rerun()
 
             except Exception as e:
@@ -1421,7 +1452,7 @@ def render_clear_shift_section():
     # 模式二：自動清除候補檸檬人（從未配班清單）
     # --------------------------------------------------------
     else:
-        step("2", "設定要掃描的週次")
+        step("3", "設定要掃描的週次")
 
         st.markdown(
             '<div class="info-strip">輸入該週任一天的日期，會抓清潔班表（每頁一週）裡每一天「未配班」灰底清單，'
@@ -1464,7 +1495,7 @@ def render_clear_shift_section():
 
         if entries is not None:
             st.markdown("---")
-            step("3", "掃描結果")
+            step("4", "掃描結果")
 
             if not entries:
                 st.info("這一週的未配班清單裡沒有發現檸檬人。")
@@ -1515,7 +1546,7 @@ def render_clear_shift_section():
 
         if st.session_state.lemon_clear_results is not None:
             st.markdown("---")
-            step("4", "清空結果")
+            step("5", "清空結果")
 
             for r in st.session_state.lemon_clear_results:
                 if r.get("errors"):
