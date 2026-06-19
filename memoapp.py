@@ -1397,6 +1397,8 @@ def render_clear_shift_section():
 
         if st.session_state.clear_person_result is not None:
             results = st.session_state.clear_person_result
+            if isinstance(results, dict):
+                results = [results]
             st.markdown("---")
             step("4", "執行結果")
 
