@@ -430,9 +430,15 @@ def confirm_lemon_ren_assignment(session: requests.Session, candidate: Dict, log
 
 def check_merged_conflicts(merged: Dict[str, str]) -> List[str]:
     """
-    檢查合併後的結果裡，有沒有同一天「全天」跟「上午/下午」同時被勾選的衝突。
-    回傳警告訊息列表（不會阻擋執行，只是提醒，因為合併邏輯本身是「新匯入蓋過舊的」，
-    衝突通常代表匯入檔或既有資料有問題，需要人工確認）。
+    檢查合併後的結果裡，有沒有同一天「全天」跟「上午/下午」同時被勾選的情況。
+
+    ⚠️ 注意：這個檢查目前「沒有」在一般匯入流程（process_import_file）裡被呼叫。
+    因為一般專員是真人，可以彈性支援（例如全8 可以涵蓋上4、全6 可以涵蓋下3），
+    全天 + 半天同時勾選對一般專員來說是合理、允許的排班方式，不是錯誤。
+
+    這個函式只保留給「檸檬人」這種佔位帳號使用（見 find_available_lemon_ren），
+    因為檸檬人是用來代表「這個時段有沒有被佔用」的系統佔位機制，
+    全天跟半天同時勾對檸檬人來說才真的代表衝突。
     """
     warnings = []
 
@@ -501,11 +507,6 @@ def process_import_file(rows: List[Dict], dry_run: bool = True, ui_logger=None) 
 
                 if clear_dates:
                     log(f"[{name} {month}] 將清空日期：{sorted(clear_dates)}")
-
-                conflict_warnings = check_merged_conflicts(merged)
-                for w in conflict_warnings:
-                    log(f"[{name} {month}] {w}")
-                    result["errors"].append(f"[{name} {month}] {w}")
 
                 if dry_run:
                     log(f"[{name} {month}] DRY RUN，合併後共 {len(merged)} 筆，不會送出")
