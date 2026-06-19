@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 import streamlit as st
 import memo
+import shift
 
 st.set_page_config(
     page_title="Memo 自動回填系統",
@@ -140,6 +141,16 @@ html, body, [class*="css"] {
     font-weight: 700;
 }
 
+.warn-strip {
+    background: #FFF4E5;
+    border-left: 4px solid #FF9500;
+    border-radius: 0 10px 10px 0;
+    padding: 0.75rem 1.1rem;
+    font-size: 0.9rem;
+    color: var(--ink);
+    margin-bottom: 1rem;
+}
+
 /* ---------- Field labels ---------- */
 
 .stTextInput label,
@@ -147,7 +158,8 @@ html, body, [class*="css"] {
 .stDateInput label,
 .stNumberInput label,
 .stRadio label,
-.stTextArea label {
+.stTextArea label,
+.stFileUploader label {
     font-weight: 700 !important;
     font-size: 14.5px !important;
     color: var(--charcoal) !important;
@@ -315,6 +327,9 @@ DEFAULT_STATE = {
     "last_mode": "",
     "login_identity": "",
     "sheet_summary": None,
+    "shift_import_rows": [],
+    "shift_dry_run_result": None,
+    "lemon_candidate": None,
 }
 
 for k, v in DEFAULT_STATE.items():
@@ -545,13 +560,24 @@ st.markdown("""
   <div class="hero-emoji">📝</div>
   <div>
     <div class="hero-title">檸檬訂單備忘錄</div>
-    <div class="hero-sub">從歷史訂單抓取最近一筆同電話、同地址、已付款、已處理且有客服備註的訂單，回填到目前未處理訂單。</div>
+    <div class="hero-sub">從歷史訂單抓取最近一筆同電話、同地址、已付款、已處理且有客服備註的訂單，回填到目前未處理訂單。同時整合排班勾選與檸檬人空檔自動分配。</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
 # ============================================================
-# Step 1：登入與環境設定
+# 功能切換
+# ============================================================
+
+app_section = st.radio(
+    "功能",
+    ["Memo 自動回填", "排班勾選（匯入檔）", "檸檬人空檔勾選"],
+    horizontal=True,
+    label_visibility="collapsed",
+)
+
+# ============================================================
+# Step 1：登入與環境設定（三個功能共用同一組登入狀態）
 # ============================================================
 
 step("1", "登入與環境設定")
@@ -625,290 +651,550 @@ with col_status:
 
 st.markdown("---")
 
+
 # ============================================================
-# Step 2：設定查詢條件
+# 功能一：Memo 自動回填
 # ============================================================
 
-step("2", "設定查詢條件")
+def render_memo_section():
+    step("2", "設定查詢條件")
 
-mode = st.radio(
-    "",
-    ["By Google Sheet", "By 電話", "By 搜尋條件"],
-    horizontal=True,
-    label_visibility="collapsed",
-)
-
-reset_mode_state_if_changed(mode)
-
-row_spec = ""
-force = False
-sheet_run_mode = "指定列號"
-sheet_limit = 5
-
-phone_text = ""
-date_mode = "服務日期"
-purchase_status_name = "全部"
-start_date = None
-end_date = None
-
-sheet_summary_btn = False
-search_btn = False
-execute_btn = False
-
-if mode == "By Google Sheet":
-    sheet_run_mode = st.radio(
-        "處理方式",
-        ["指定列號", "依剩餘筆數處理"],
-        horizontal=True
+    mode = st.radio(
+        "",
+        ["By Google Sheet", "By 電話", "By 搜尋條件"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="memo_mode",
     )
 
-    if sheet_run_mode == "指定列號":
-        st.markdown(
-            '<div class="info-strip">列號支援：單列 <code>2</code>、逗號分隔 <code>2,3,5</code>、區間 <code>2,3,5-7</code></div>',
-            unsafe_allow_html=True
+    reset_mode_state_if_changed(mode)
+
+    row_spec = ""
+    force = False
+    sheet_run_mode = "指定列號"
+    sheet_limit = 5
+
+    phone_text = ""
+    date_mode = "服務日期"
+    purchase_status_name = "全部"
+    start_date = None
+    end_date = None
+
+    sheet_summary_btn = False
+    search_btn = False
+    execute_btn = False
+
+    if mode == "By Google Sheet":
+        sheet_run_mode = st.radio(
+            "處理方式",
+            ["指定列號", "依剩餘筆數處理"],
+            horizontal=True
         )
 
-        c1, c2 = st.columns([5, 1])
+        if sheet_run_mode == "指定列號":
+            st.markdown(
+                '<div class="info-strip">列號支援：單列 <code>2</code>、逗號分隔 <code>2,3,5</code>、區間 <code>2,3,5-7</code></div>',
+                unsafe_allow_html=True
+            )
 
-        with c1:
-            row_spec = st.text_input("列號")
+            c1, c2 = st.columns([5, 1])
 
-        with c2:
-            st.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
-            force = st.checkbox("強制重跑")
+            with c1:
+                row_spec = st.text_input("列號")
 
-        execute_btn = st.button(
-            "🚀 執行",
-            use_container_width=True,
-            disabled=not st.session_state.is_logged_in
+            with c2:
+                st.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
+                force = st.checkbox("強制重跑")
+
+            execute_btn = st.button(
+                "🚀 執行",
+                use_container_width=True,
+                disabled=not st.session_state.is_logged_in
+            )
+
+        else:
+            c1, c2 = st.columns(2)
+
+            with c1:
+                sheet_summary_btn = st.button(
+                    "🔍 查詢目前筆數",
+                    use_container_width=True,
+                    disabled=not st.session_state.is_logged_in
+                )
+
+            with c2:
+                sheet_limit = st.number_input(
+                    "本次處理筆數",
+                    min_value=1,
+                    value=5
+                )
+
+            if st.session_state.sheet_summary:
+                s = st.session_state.sheet_summary
+                m1, m2, m3 = st.columns(3)
+                m1.metric("總筆數", s.get("total_rows", 0))
+                m2.metric("未處理筆數", s.get("pending_rows", 0))
+                m3.metric("已處理筆數", s.get("done_rows", 0))
+
+            execute_btn = st.button(
+                "🚀 執行前 N 筆未處理資料",
+                use_container_width=True,
+                disabled=not st.session_state.is_logged_in
+            )
+
+    elif mode == "By 電話":
+        phone_text = st.text_area(
+            "電話號碼",
+            placeholder="可輸入多支，以逗號或換行分隔，例：0912345678,0922345678"
         )
 
-    else:
+        st.caption("會先找出「目標訂單」，再比對最近一筆可參照的來源訂單。")
+
         c1, c2 = st.columns(2)
 
         with c1:
-            sheet_summary_btn = st.button(
-                "🔍 查詢目前筆數",
+            search_btn = st.button(
+                "🔍 查詢列表",
                 use_container_width=True,
                 disabled=not st.session_state.is_logged_in
             )
 
         with c2:
-            sheet_limit = st.number_input(
-                "本次處理筆數",
-                min_value=1,
-                value=5
+            execute_btn = st.button(
+                "🚀 執行勾選項目",
+                use_container_width=True,
+                disabled=not st.session_state.is_logged_in
             )
 
-        if st.session_state.sheet_summary:
-            s = st.session_state.sheet_summary
-            m1, m2, m3 = st.columns(3)
-            m1.metric("總筆數", s.get("total_rows", 0))
-            m2.metric("未處理筆數", s.get("pending_rows", 0))
-            m3.metric("已處理筆數", s.get("done_rows", 0))
+    else:
+        c1, c2 = st.columns(2)
 
-        execute_btn = st.button(
-            "🚀 執行前 N 筆未處理資料",
-            use_container_width=True,
-            disabled=not st.session_state.is_logged_in
+        with c1:
+            date_mode = st.selectbox("日期條件", ["服務日期", "購買日期"])
+
+        with c2:
+            purchase_status_name = st.selectbox(
+                "付款狀態",
+                ["全部", "已付款", "未付款"],
+                index=0
+            )
+
+        c3, c4 = st.columns(2)
+
+        with c3:
+            start_date = st.date_input("開始日期", value=None)
+
+        with c4:
+            end_date = st.date_input("結束日期", value=None)
+
+        st.caption("搜尋條件固定只撈服務狀態＝未處理的目標訂單，再比對最近的可參照來源。")
+
+        c5, c6 = st.columns(2)
+
+        with c5:
+            search_btn = st.button(
+                "🔍 查詢列表",
+                use_container_width=True,
+                disabled=not st.session_state.is_logged_in
+            )
+
+        with c6:
+            execute_btn = st.button(
+                "🚀 執行勾選項目",
+                use_container_width=True,
+                disabled=not st.session_state.is_logged_in
+            )
+
+    global log_box, result_container
+
+    with st.expander("執行 LOG", expanded=True):
+        log_box = st.empty()
+        log_box.code(
+            "\n".join(st.session_state.logs[-3000:])
+            if st.session_state.logs
+            else "尚未執行"
         )
 
-elif mode == "By 電話":
-    phone_text = st.text_area(
-        "電話號碼",
-        placeholder="可輸入多支，以逗號或換行分隔，例：0912345678,0922345678"
-    )
+    result_container = st.container()
 
-    st.caption("會先找出「目標訂單」，再比對最近一筆可參照的來源訂單。")
-
-    c1, c2 = st.columns(2)
-
-    with c1:
-        search_btn = st.button(
-            "🔍 查詢列表",
-            use_container_width=True,
-            disabled=not st.session_state.is_logged_in
-        )
-
-    with c2:
-        execute_btn = st.button(
-            "🚀 執行勾選項目",
-            use_container_width=True,
-            disabled=not st.session_state.is_logged_in
-        )
-
-else:
-    c1, c2 = st.columns(2)
-
-    with c1:
-        date_mode = st.selectbox("日期條件", ["服務日期", "購買日期"])
-
-    with c2:
-        purchase_status_name = st.selectbox(
-            "付款狀態",
-            ["全部", "已付款", "未付款"],
-            index=0
-        )
-
-    c3, c4 = st.columns(2)
-
-    with c3:
-        start_date = st.date_input("開始日期", value=None)
-
-    with c4:
-        end_date = st.date_input("結束日期", value=None)
-
-    st.caption("搜尋條件固定只撈服務狀態＝未處理的目標訂單，再比對最近的可參照來源。")
-
-    c5, c6 = st.columns(2)
-
-    with c5:
-        search_btn = st.button(
-            "🔍 查詢列表",
-            use_container_width=True,
-            disabled=not st.session_state.is_logged_in
-        )
-
-    with c6:
-        execute_btn = st.button(
-            "🚀 執行勾選項目",
-            use_container_width=True,
-            disabled=not st.session_state.is_logged_in
-        )
-
-with st.expander("執行 LOG", expanded=True):
-    log_box = st.empty()
-    log_box.code(
-        "\n".join(st.session_state.logs[-3000:])
-        if st.session_state.logs
-        else "尚未執行"
-    )
-
-result_container = st.container()
-
-if st.session_state.result is not None:
-    render_result(st.session_state.result)
-
-if sheet_summary_btn:
-    try:
-        st.session_state.is_running = True
-        reset_before_action(clear_preview=True, clear_selection=True)
-        ui_log("===== 查詢目前筆數 =====")
-
-        with st.spinner("查詢中，請稍候…"):
-            st.session_state.sheet_summary = memo.get_sheet_summary(ui_logger=ui_log)
-
-        ui_log("✅ 查詢完成")
-
-    except Exception as e:
-        ui_log(f"❌ 查詢失敗：{e}")
-        st.error(str(e))
-
-    finally:
-        st.session_state.is_running = False
-
-if search_btn:
-    try:
-        st.session_state.is_running = True
-        reset_before_action(clear_preview=True, clear_selection=True)
-        ui_log("===== 開始查詢 =====")
-
-        with st.spinner("查詢中，請稍候…"):
-            if mode == "By 電話":
-                if not phone_text.strip():
-                    raise ValueError("請輸入至少一支電話")
-
-                preview_rows = memo.preview_by_phone_multi(
-                    phone_text=phone_text.strip(),
-                    ui_logger=ui_log
-                )
-
-            else:
-                start_text = start_date.strftime("%Y/%m/%d") if start_date else ""
-                end_text = end_date.strftime("%Y/%m/%d") if end_date else ""
-
-                preview_rows = memo.preview_by_conditions(
-                    date_mode=date_mode,
-                    date_start=start_text,
-                    date_end=end_text,
-                    purchase_status_name=purchase_status_name,
-                    ui_logger=ui_log,
-                )
-
-        st.session_state.preview_rows = preview_rows or []
-        ui_log(f"✅ 查詢完成，共 {len(st.session_state.preview_rows)} 筆")
-        st.rerun()
-
-    except Exception as e:
-        ui_log(f"❌ 查詢錯誤：{e}")
-        st.error(str(e))
-
-    finally:
-        st.session_state.is_running = False
-
-selected_ids = []
-
-if mode in ["By 電話", "By 搜尋條件"] and st.session_state.preview_rows:
-    st.markdown("---")
-    selected_ids = render_preview_blocks(st.session_state.preview_rows)
-
-if execute_btn:
-    try:
-        st.session_state.is_running = True
-        reset_before_execute_keep_preview()
-
-        if mode == "By Google Sheet":
-            ui_log("===== 開始執行 =====")
-
-            with st.spinner("執行中，請稍候…"):
-                if sheet_run_mode == "指定列號":
-                    result = memo.main(
-                        row_spec=row_spec,
-                        force=force,
-                        ui_logger=ui_log
-                    )
-                else:
-                    result = memo.main_first_n_pending(
-                        limit=int(sheet_limit),
-                        ui_logger=ui_log
-                    )
-
-        else:
-            if not st.session_state.preview_rows:
-                raise RuntimeError("請先查詢列表")
-
-            current_selected_ids = []
-
-            for row in st.session_state.preview_rows:
-                oid = str(safe_get(row, "order_id", default="")).strip()
-
-                if oid and st.session_state.get(f"pick_{oid}", False):
-                    current_selected_ids.append(oid)
-
-            if not current_selected_ids:
-                raise RuntimeError("請先勾選要執行的資料")
-
-            ui_log("===== 開始執行勾選項目 =====")
-            ui_log(f"勾選筆數：{len(current_selected_ids)}")
-
-            with st.spinner("執行中，請稍候…"):
-                result = memo.main_by_selected_order_ids(
-                    order_ids=current_selected_ids,
-                    ui_logger=ui_log
-                )
-
-        ui_log("===== 執行完成 =====")
-        st.session_state.result = result
-        render_result(result)
-
-    except Exception as e:
-        ui_log(f"❌ 執行錯誤：{e}")
-        st.session_state.result = {
-            **DEFAULT_RESULT,
-            "failed": 1,
-            "errors": [str(e)]
-        }
+    if st.session_state.result is not None:
         render_result(st.session_state.result)
 
-    finally:
-        st.session_state.is_running = False
+    if sheet_summary_btn:
+        try:
+            st.session_state.is_running = True
+            reset_before_action(clear_preview=True, clear_selection=True)
+            ui_log("===== 查詢目前筆數 =====")
+
+            with st.spinner("查詢中，請稍候…"):
+                st.session_state.sheet_summary = memo.get_sheet_summary(ui_logger=ui_log)
+
+            ui_log("✅ 查詢完成")
+
+        except Exception as e:
+            ui_log(f"❌ 查詢失敗：{e}")
+            st.error(str(e))
+
+        finally:
+            st.session_state.is_running = False
+
+    if search_btn:
+        try:
+            st.session_state.is_running = True
+            reset_before_action(clear_preview=True, clear_selection=True)
+            ui_log("===== 開始查詢 =====")
+
+            with st.spinner("查詢中，請稍候…"):
+                if mode == "By 電話":
+                    if not phone_text.strip():
+                        raise ValueError("請輸入至少一支電話")
+
+                    preview_rows = memo.preview_by_phone_multi(
+                        phone_text=phone_text.strip(),
+                        ui_logger=ui_log
+                    )
+
+                else:
+                    start_text = start_date.strftime("%Y/%m/%d") if start_date else ""
+                    end_text = end_date.strftime("%Y/%m/%d") if end_date else ""
+
+                    preview_rows = memo.preview_by_conditions(
+                        date_mode=date_mode,
+                        date_start=start_text,
+                        date_end=end_text,
+                        purchase_status_name=purchase_status_name,
+                        ui_logger=ui_log,
+                    )
+
+            st.session_state.preview_rows = preview_rows or []
+            ui_log(f"✅ 查詢完成，共 {len(st.session_state.preview_rows)} 筆")
+            st.rerun()
+
+        except Exception as e:
+            ui_log(f"❌ 查詢錯誤：{e}")
+            st.error(str(e))
+
+        finally:
+            st.session_state.is_running = False
+
+    if mode in ["By 電話", "By 搜尋條件"] and st.session_state.preview_rows:
+        st.markdown("---")
+        render_preview_blocks(st.session_state.preview_rows)
+
+    if execute_btn:
+        try:
+            st.session_state.is_running = True
+            reset_before_execute_keep_preview()
+
+            if mode == "By Google Sheet":
+                ui_log("===== 開始執行 =====")
+
+                with st.spinner("執行中，請稍候…"):
+                    if sheet_run_mode == "指定列號":
+                        result = memo.main(
+                            row_spec=row_spec,
+                            force=force,
+                            ui_logger=ui_log
+                        )
+                    else:
+                        result = memo.main_first_n_pending(
+                            limit=int(sheet_limit),
+                            ui_logger=ui_log
+                        )
+
+            else:
+                if not st.session_state.preview_rows:
+                    raise RuntimeError("請先查詢列表")
+
+                current_selected_ids = []
+
+                for row in st.session_state.preview_rows:
+                    oid = str(safe_get(row, "order_id", default="")).strip()
+
+                    if oid and st.session_state.get(f"pick_{oid}", False):
+                        current_selected_ids.append(oid)
+
+                if not current_selected_ids:
+                    raise RuntimeError("請先勾選要執行的資料")
+
+                ui_log("===== 開始執行勾選項目 =====")
+                ui_log(f"勾選筆數：{len(current_selected_ids)}")
+
+                with st.spinner("執行中，請稍候…"):
+                    result = memo.main_by_selected_order_ids(
+                        order_ids=current_selected_ids,
+                        ui_logger=ui_log
+                    )
+
+            ui_log("===== 執行完成 =====")
+            st.session_state.result = result
+            render_result(result)
+
+        except Exception as e:
+            ui_log(f"❌ 執行錯誤：{e}")
+            st.session_state.result = {
+                **DEFAULT_RESULT,
+                "failed": 1,
+                "errors": [str(e)]
+            }
+            render_result(st.session_state.result)
+
+        finally:
+            st.session_state.is_running = False
+
+
+# ============================================================
+# 功能二：排班勾選（匯入檔）
+# ============================================================
+
+def render_shift_import_section():
+    step("2", "上傳排班匯入檔")
+
+    st.markdown(
+        '<div class="info-strip">欄位需求：<code>地區</code> / <code>日期</code> / <code>類型</code> / <code>時段</code> / <code>名稱</code>。'
+        '「類型」支援：全6、全8、上4、上3、上2、下4、下3、下2、晚2、清。</div>',
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        '<div class="warn-strip">⚠️ 這個功能會直接改動後台真實排班資料，請務必先用「Dry Run 預覽」確認合併結果正確，再按「正式儲存」。</div>',
+        unsafe_allow_html=True
+    )
+
+    uploaded_file = st.file_uploader("選擇 Excel / CSV 檔案", type=["xlsx", "xls", "csv"])
+
+    c1, c2 = st.columns(2)
+    with c1:
+        dry_run_btn = st.button(
+            "🔍 Dry Run 預覽（不會寫入）",
+            use_container_width=True,
+            disabled=not (st.session_state.is_logged_in and uploaded_file is not None),
+        )
+    with c2:
+        execute_btn = st.button(
+            "🚀 正式儲存",
+            use_container_width=True,
+            disabled=not (
+                st.session_state.is_logged_in
+                and st.session_state.shift_dry_run_result is not None
+            ),
+        )
+
+    with st.expander("執行 LOG", expanded=True):
+        log_box_local = st.empty()
+        log_box_local.code(
+            "\n".join(st.session_state.logs[-3000:])
+            if st.session_state.logs
+            else "尚未執行"
+        )
+
+    def shift_ui_log(msg):
+        st.session_state.logs.append(str(msg))
+        try:
+            log_box_local.code("\n".join(st.session_state.logs[-3000:]))
+        except Exception:
+            pass
+
+    if dry_run_btn and uploaded_file is not None:
+        try:
+            st.session_state.logs = []
+            st.session_state.shift_dry_run_result = None
+            shift_ui_log("===== 開始解析匯入檔 =====")
+
+            rows = shift.parse_import_file(uploaded_file, uploaded_file.name)
+            shift_ui_log(f"解析完成，共 {len(rows)} 筆有效資料")
+            st.session_state.shift_import_rows = rows
+
+            with st.spinner("Dry Run 中，請稍候…"):
+                result = shift.process_import_file(rows, dry_run=True, ui_logger=shift_ui_log)
+
+            st.session_state.shift_dry_run_result = result
+            shift_ui_log("===== Dry Run 完成 =====")
+
+        except Exception as e:
+            shift_ui_log(f"❌ Dry Run 失敗：{e}")
+            st.error(str(e))
+
+    if st.session_state.shift_dry_run_result:
+        result = st.session_state.shift_dry_run_result
+
+        st.markdown("---")
+        step("3", "Dry Run 結果預覽")
+
+        m1, m2, m3 = st.columns(3)
+        m1.metric("處理人數", result.get("processed_people", 0))
+        m2.metric("處理月份數", result.get("processed_months", 0))
+        m3.metric("略過人數", len(result.get("skipped", [])))
+
+        if result.get("errors"):
+            with st.expander(f"⚠️ 訊息（{len(result['errors'])} 筆）", expanded=True):
+                for i, err in enumerate(result["errors"], 1):
+                    st.markdown(f"**{i}.** {err}")
+
+        for name, month, merged in result.get("dry_run_payloads", []):
+            with st.expander(f"{name} — {month}（合併後共 {len(merged)} 筆勾選）", expanded=False):
+                if merged:
+                    sorted_items = sorted(merged.items())
+                    st.code("\n".join(f"{k} = {v}" for k, v in sorted_items))
+                else:
+                    st.caption("這個月份合併後沒有任何勾選（可能是被「清」全部清空了）")
+
+        st.caption("確認上面合併後的結果沒有問題，再按「正式儲存」送出。")
+
+    if execute_btn:
+        try:
+            st.session_state.logs = []
+            ui_log("===== 開始正式儲存 =====")
+
+            rows = st.session_state.shift_import_rows
+            with st.spinner("儲存中，請稍候…"):
+                result = shift.process_import_file(rows, dry_run=False, ui_logger=ui_log)
+
+            ui_log("===== 儲存完成 =====")
+            st.success(f"✅ 完成，共儲存 {result.get('saved', 0)} 個人/月份")
+
+            if result.get("errors"):
+                st.error("\n".join(result["errors"][:20]))
+
+            st.session_state.shift_dry_run_result = None
+
+        except Exception as e:
+            ui_log(f"❌ 儲存失敗：{e}")
+            st.error(str(e))
+
+
+# ============================================================
+# 功能三：檸檬人空檔勾選
+# ============================================================
+
+def render_lemon_ren_section():
+    step("2", "設定要找空檔的日期與類型")
+
+    st.markdown(
+        '<div class="info-strip">會依序檢查 檸檬人1 ~ 檸檬人N，找出「該日期、該類型對應的時段」目前沒有被勾選的第一位，'
+        '當作可用的佔位帳號。找到後可以直接送出勾選，或是只查詢不勾選。</div>',
+        unsafe_allow_html=True
+    )
+
+    c1, c2, c3 = st.columns([1.3, 1.3, 1])
+
+    with c1:
+        target_date = st.date_input("日期")
+
+    with c2:
+        type_options = list(shift.TYPE_MAP.keys())
+        type_val = st.selectbox("類型", type_options)
+
+    with c3:
+        max_count = st.number_input("檸檬人最大數量", min_value=1, max_value=50, value=shift.LEMON_REN_DEFAULT_COUNT)
+
+    find_btn = st.button(
+        "🔍 尋找空檔檸檬人",
+        use_container_width=True,
+        disabled=not st.session_state.is_logged_in,
+    )
+
+    with st.expander("執行 LOG", expanded=True):
+        log_box_local = st.empty()
+        log_box_local.code(
+            "\n".join(st.session_state.logs[-3000:])
+            if st.session_state.logs
+            else "尚未執行"
+        )
+
+    def lemon_ui_log(msg):
+        st.session_state.logs.append(str(msg))
+        try:
+            log_box_local.code("\n".join(st.session_state.logs[-3000:]))
+        except Exception:
+            pass
+
+    if find_btn:
+        try:
+            st.session_state.logs = []
+            st.session_state.lemon_candidate = None
+            lemon_ui_log("===== 開始尋找空檔檸檬人 =====")
+
+            date_str = target_date.strftime("%Y-%m-%d")
+
+            with st.spinner("登入並查詢中，請稍候…"):
+                session = memo.login(ui_logger=lemon_ui_log)
+                candidate = shift.find_available_lemon_ren(
+                    session=session,
+                    date_val=date_str,
+                    type_val=type_val,
+                    max_count=int(max_count),
+                    log=lemon_ui_log,
+                )
+
+            st.session_state.lemon_candidate = candidate
+            lemon_ui_log("===== 查詢完成 =====")
+
+        except Exception as e:
+            lemon_ui_log(f"❌ 查詢失敗：{e}")
+            st.error(str(e))
+
+    candidate = st.session_state.lemon_candidate
+
+    if candidate:
+        st.markdown("---")
+        step("3", "查詢結果")
+
+        if candidate.get("found"):
+            checked_names = ", ".join(c["name"] for c in candidate.get("checked_candidates", [])) or "無，第一位就是空的"
+            date_part = candidate["slot_key"].rsplit("_", 1)[0]
+
+            st.markdown(f"""
+            <div class="preview-card preview-ok">
+                <div class="preview-title">✅ 找到空檔：{candidate['name']}</div>
+                <div class="preview-sub">
+                    <b>日期：</b>{date_part}<br>
+                    <b>類型：</b>{type_val}（slot 值：{candidate['value']}）<br>
+                    <b>已檢查並跳過：</b>{checked_names}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+            confirm_btn = st.button(
+                f"🚀 確認勾選「{candidate['name']}」並儲存",
+                type="primary",
+                use_container_width=True,
+            )
+
+            if confirm_btn:
+                try:
+                    ui_log(f"===== 確認勾選 {candidate['name']} =====")
+                    with st.spinner("儲存中，請稍候…"):
+                        session = memo.login(ui_logger=ui_log)
+                        shift.confirm_lemon_ren_assignment(session, candidate, log=ui_log)
+
+                    st.success(f"✅ 已將「{candidate['name']}」勾選並儲存")
+                    st.session_state.lemon_candidate = None
+
+                except Exception as e:
+                    ui_log(f"❌ 勾選失敗：{e}")
+                    st.error(str(e))
+
+        else:
+            checked_names = ", ".join(c["name"] for c in candidate.get("checked_candidates", [])) or "無"
+
+            st.markdown(f"""
+            <div class="preview-card preview-ng">
+                <div class="preview-title">❌ 沒有找到空檔</div>
+                <div class="preview-sub">
+                    檸檬人1 ~ 檸檬人{max_count} 在這個日期＋類型的時段全部被佔用，或是找不到對應帳號。<br>
+                    <b>已檢查：</b>{checked_names}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+
+# ============================================================
+# 依目前選擇的功能渲染對應區塊
+# ============================================================
+
+if app_section == "Memo 自動回填":
+    render_memo_section()
+elif app_section == "排班勾選（匯入檔）":
+    render_shift_import_section()
+else:
+    render_lemon_ren_section()
