@@ -156,30 +156,44 @@ def group_rows_by_name_and_month(rows: List[Dict]) -> Dict[str, Dict[str, List[D
 # -----------------------------------------------------------------------------
 # 依姓名搜尋專員 ID
 # -----------------------------------------------------------------------------
-def find_cleaner_id_by_name(session: requests.Session, name: str) -> Optional[str]:
+# 「居家專員」列表頁有分頁（目前 29 頁，會持續增加），逐頁搜尋不可靠。
+# /schedule 頁面裡剛好有一份 <select id="cleaner_id"> 下拉選單，
+# 一次列出「全部」專員（含所有檸檬人）的姓名→ID 對照，改用這個一次抓全部最穩。
+_CLEANER_NAME_TO_ID_CACHE: Dict[str, str] = {}
+
+
+def build_cleaner_directory(session: requests.Session, force_refresh: bool = False) -> Dict[str, str]:
     """
-    ⚠️ TODO：搜尋頁的實際 URL / 參數名稱還沒確認，這裡先用猜測版本。
-    請提供「居家專員」列表頁，輸入姓名按下搜尋後，網址列變成什麼樣子，
-    我再把下面這段改成正確的 request。
+    回傳 {姓名: 專員ID} 的完整對照表，來源是 /schedule 頁面的 cleaner_id 下拉選單。
+    結果會快取在模組層級變數，同一次 process 內不用重複打。
     """
-    url = f"{memo.BASE_URL}/cleaner1"
-    r = memo.session_get(session, url, params={"search": name})
+    global _CLEANER_NAME_TO_ID_CACHE
+
+    if _CLEANER_NAME_TO_ID_CACHE and not force_refresh:
+        return _CLEANER_NAME_TO_ID_CACHE
+
+    url = f"{memo.BASE_URL}/schedule"
+    r = memo.session_get(session, url)
     r.raise_for_status()
 
     soup = BeautifulSoup(r.text, "html.parser")
+    select_el = soup.select_one("select#cleaner_id")
 
-    # 嘗試找「排班」連結，從 href 抓出 cleaner id
-    for a in soup.select('a[href*="/shift"]'):
-        href = a.get("href", "")
-        # 同一列裡要先確認姓名真的對得上，避免抓到別人
-        row = a.find_parent("tr")
-        row_text = row.get_text(" ", strip=True) if row else ""
-        if name in row_text:
-            m = re.search(r"/cleaner1/(\d+)/shift", href)
-            if m:
-                return m.group(1)
+    directory = {}
+    if select_el:
+        for opt in select_el.select("option"):
+            value = (opt.get("value") or "").strip()
+            name = opt.get_text(strip=True)
+            if value and value != "0" and name:
+                directory[name] = value
 
-    return None
+    _CLEANER_NAME_TO_ID_CACHE = directory
+    return directory
+
+
+def find_cleaner_id_by_name(session: requests.Session, name: str) -> Optional[str]:
+    directory = build_cleaner_directory(session)
+    return directory.get(name)
 
 
 # -----------------------------------------------------------------------------
@@ -463,11 +477,23 @@ def check_merged_conflicts(merged: Dict[str, str]) -> List[str]:
 # -----------------------------------------------------------------------------
 # 主流程：處理整份匯入檔
 # -----------------------------------------------------------------------------
+LEMON_REN_NAME_PATTERN = re.compile(r"^檸檬人")
+
+
 def process_import_file(rows: List[Dict], dry_run: bool = True, ui_logger=None) -> Dict:
     """
     dry_run=True：只做到「組好 payload」為止，不會真的送出，
                   並把每個人/每個月份合併後的 payload 印到 log 讓你核對。
     dry_run=False：實際送出儲存。
+
+    合併規則（預設）：「以匯入檔為準」——只要某個日期有出現在這次匯入檔裡
+    （不管是新增還是「清」），就把該日期既有的四個 slot 全部重設，
+    再套用匯入檔裡這個日期的內容。完全沒出現在匯入檔裡的日期則維持原樣不動。
+    👉 所以做局部微調時，請確保要調整的那個日期，在匯入檔裡是「完整」的當天
+    資料，而不是只放你想改的那一筆，否則同一天其他沒列出的時段會被視為清空。
+
+    「檸檬人」相關列會被自動略過，不會透過這個一般匯入流程處理
+    （檸檬人請改用「檸檬人空檔勾選」功能，那邊有衝突檢查機制）。
     """
     log = make_logger(ui_logger)
     result = {
@@ -479,8 +505,15 @@ def process_import_file(rows: List[Dict], dry_run: bool = True, ui_logger=None) 
         "dry_run_payloads": [],  # [(name, month, merged_dict), ...]
     }
 
+    lemon_rows = [r for r in rows if LEMON_REN_NAME_PATTERN.match(r.get("name", ""))]
+    rows = [r for r in rows if not LEMON_REN_NAME_PATTERN.match(r.get("name", ""))]
+
+    if lemon_rows:
+        log(f"⏭ 已略過 {len(lemon_rows)} 筆檸檬人資料（請改用「檸檬人空檔勾選」功能處理）")
+
     grouped = group_rows_by_name_and_month(rows)
     session = memo.login(ui_logger=ui_logger)
+    build_cleaner_directory(session, force_refresh=True)  # 強制重新抓最新的姓名→ID對照
 
     for name, months in grouped.items():
         log(f"\n===== 處理專員：{name} =====")
@@ -501,7 +534,11 @@ def process_import_file(rows: List[Dict], dry_run: bool = True, ui_logger=None) 
             try:
                 token, existing = get_shift_page_state(session, cleaner_id, month)
                 new_entries, clear_dates = build_new_shift_entries(month_rows, log=log)
-                merged = merge_shift_entries(existing, new_entries, clear_dates)
+
+                # 「以匯入檔為準」：把這次匯入檔裡有提到的日期（不管新增或清空）
+                # 整天重設，再套用新內容，避免同一天舊資料殘留跟新檔打架。
+                mentioned_dates = clear_dates | {k.rsplit("_", 1)[0] for k in new_entries}
+                merged = merge_shift_entries(existing, new_entries, mentioned_dates)
 
                 result["processed_months"] += 1
 
