@@ -21,6 +21,7 @@
    目前用猜測的 `?search=` 寫，需要你確認後修正（見檔案下方 TODO）。
 """
 import re
+from datetime import date, timedelta
 from typing import Dict, List, Optional, Callable
 
 import requests
@@ -42,6 +43,21 @@ TYPE_MAP = {
     "下3": ("2", "1400-1700"),
     "下4": ("2", "1400-1800"),
     "晚2": ("3", "1900-2100"),
+}
+
+# 每個類型對應的「單一數字代碼」（清潔班表頁面上 "44檸檬人10" 這種顯示用的編碼）
+# 數字代表時數，09:00-16:00（全6）跟 14:00-16:00（下2）等不同 slot 可能共用同一個數字，
+# 純粹文字解析無法 100% 反推回精確 slot，這裡只用來做「整天清空」，不逐一還原 slot。
+TYPE_DIGIT_MAP = {
+    "上4": "4",
+    "上3": "3",
+    "上2": "2",
+    "全6": "6",
+    "全8": "8",
+    "下2": "2",
+    "下3": "3",
+    "下4": "4",
+    "晚2": "2",
 }
 
 # 「清」不是欄位，是「把當天這四個 slot 全部清空」的動作
@@ -312,6 +328,44 @@ def submit_shift_payload(session: requests.Session, cleaner_id: str, token: str,
 LEMON_REN_PREFIX = "檸檬人"
 LEMON_REN_DEFAULT_COUNT = 10
 
+# 清潔班表頁面「未配班」清單裡的檸檬人文字格式固定是：
+#   [代碼數字]檸檬人[編號或甲乙丙丁戊己][星等，固定一碼數字]
+# 例如「44檸檬人10」= 代碼「44」+ 檸檬人「1」+ 星等「0」（不是「檸檬人10」沒有星等）。
+# 星等永遠是緊接在名字後面的最後一碼數字（可以是 0），所以解析時要先從尾端
+# 拿掉這一碼當星等，剩下的才是檸檬人編號／甲乙丙丁戊己。
+LEMON_REN_CHAR_SUFFIXES = "甲乙丙丁戊己"
+
+
+def parse_lemon_label(text: str) -> Optional[Dict[str, str]]:
+    """
+    解析「44檸檬人10」這種文字，回傳 {"code": "44", "name": "檸檬人1", "rating": "0"}。
+    解析失敗（不是檸檬人，或格式不符）回傳 None。
+    """
+    m = re.match(r"^(?P<code>\d*)檸檬人(?P<rest>.+)$", text.strip())
+    if not m:
+        return None
+
+    rest = m.group("rest")
+    if not rest:
+        return None
+
+    rating = rest[-1]
+    if not rating.isdigit():
+        return None
+
+    number_part = rest[:-1]
+    if not number_part:
+        return None
+
+    if number_part.isdigit() or number_part in LEMON_REN_CHAR_SUFFIXES:
+        return {
+            "code": m.group("code"),
+            "name": f"檸檬人{number_part}",
+            "rating": rating,
+        }
+
+    return None
+
 
 def find_available_lemon_ren(
     session: requests.Session,
@@ -559,3 +613,237 @@ def process_import_file(rows: List[Dict], dry_run: bool = True, ui_logger=None) 
                 result["errors"].append(msg)
 
     return result
+
+
+# =============================================================================
+# 清空排班：功能1 —— 清空某人（含檸檬人）一段期間的排班
+# =============================================================================
+def date_range(date_start: str, date_end: str) -> List[str]:
+    """產生 [date_start, date_end] 間每一天的 YYYY-MM-DD 字串（含頭尾）。"""
+    d1 = date.fromisoformat(date_start)
+    d2 = date.fromisoformat(date_end)
+    if d2 < d1:
+        d1, d2 = d2, d1
+    days = []
+    cur = d1
+    while cur <= d2:
+        days.append(cur.isoformat())
+        cur += timedelta(days=1)
+    return days
+
+
+def clear_person_shift_dates(
+    session: requests.Session,
+    name: str,
+    dates_to_clear: List[str],
+    ui_logger=None,
+) -> Dict:
+    """
+    清空指定人員（含檸檬人）在 dates_to_clear 這些日期的整天排班
+    （all/上午/下午/晚上 四個 slot 全部移除），並送出儲存。
+
+    回傳：
+    {
+        "name": "...",
+        "cleaner_id": "...",
+        "cleared_dates": [...],       # 實際有清到東西的日期
+        "cleared_slot_count": 0,
+        "untouched_dates": [...],     # 原本就沒有勾選、清了也沒差的日期
+        "errors": [...],
+    }
+    """
+    log = make_logger(ui_logger)
+    result = {
+        "name": name,
+        "cleaner_id": None,
+        "cleared_dates": [],
+        "cleared_slot_count": 0,
+        "untouched_dates": [],
+        "errors": [],
+    }
+
+    cleaner_id = find_cleaner_id_by_name(session, name)
+    if not cleaner_id:
+        msg = f"❌ 找不到「{name}」的後台帳號"
+        log(msg)
+        result["errors"].append(msg)
+        return result
+
+    result["cleaner_id"] = cleaner_id
+
+    by_month: Dict[str, List[str]] = {}
+    for d in dates_to_clear:
+        by_month.setdefault(d[:7], []).append(d)
+
+    for month, dates in by_month.items():
+        try:
+            token, existing = get_shift_page_state(session, cleaner_id, month)
+
+            removed_keys = []
+            for d in dates:
+                day_had_entry = False
+                for slot in ALL_SLOTS:
+                    key = f"{d}_{slot}"
+                    if key in existing:
+                        removed_keys.append(key)
+                        day_had_entry = True
+                if day_had_entry:
+                    result["cleared_dates"].append(d)
+                else:
+                    result["untouched_dates"].append(d)
+
+            merged = merge_shift_entries(existing, {}, clear_dates=dates)
+            submit_shift_payload(session, cleaner_id, token, merged)
+
+            result["cleared_slot_count"] += len(removed_keys)
+            log(f"✅ [{name} {month}] 已清空 {sorted(dates)}，移除 {len(removed_keys)} 筆既有勾選：{removed_keys}")
+
+        except Exception as e:
+            msg = f"❌ [{name} {month}] 清空失敗：{e}"
+            log(msg)
+            result["errors"].append(msg)
+
+    return result
+
+
+def clear_person_shift_range(
+    session: requests.Session,
+    name: str,
+    date_start: str,
+    date_end: str,
+    ui_logger=None,
+) -> Dict:
+    """功能1 的對外入口：清空某人（含檸檬人）date_start ~ date_end 這段期間的排班。"""
+    dates = date_range(date_start, date_end)
+    return clear_person_shift_dates(session, name, dates, ui_logger=ui_logger)
+
+
+# =============================================================================
+# 清空排班：功能2 —— 從清潔班表「未配班」清單，反查並清除檸檬人佔用的時段
+# =============================================================================
+def _parse_schedule_query_date(html: str, fallback: str) -> str:
+    """從清潔班表頁面的 <input id="date" value="..."> 取得目前查詢的日期，取不到就用 fallback。"""
+    soup = BeautifulSoup(html, "html.parser")
+    el = soup.select_one("input#date")
+    if el and el.get("value"):
+        return el.get("value").strip()
+    return fallback
+
+
+def _row_label_to_date(label: str, query_date: str) -> Optional[str]:
+    """
+    把表格列頭的「06-23（二）」轉成完整日期 YYYY-MM-DD。
+    用 query_date（該週查詢日期）的年份為基準，若列的月份比查詢月份小很多
+    （代表跨年，例如查詢 12 月、列出現隔年 1 月），年份自動 +1。
+    """
+    m = re.match(r"(\d{2})-(\d{2})", label.strip())
+    if not m:
+        return None
+    month, day = m.group(1), m.group(2)
+
+    q = date.fromisoformat(query_date)
+    year = q.year
+    if q.month == 12 and int(month) == 1:
+        year += 1
+    elif q.month == 1 and int(month) == 12:
+        year -= 1
+
+    return f"{year}-{month}-{day}"
+
+
+def parse_unassigned_lemon_entries(html: str, query_date: str) -> List[Dict]:
+    """
+    解析清潔班表頁面（/schedule?date=YYYY-MM-DD）裡每一天「未配班」灰底清單中的檸檬人。
+
+    回傳 list of dict：[{"date": "2026-06-23", "name": "檸檬人10", "raw": "44檸檬人10"}, ...]
+    （同一天同一個檸檬人若在多欄重複出現，會被去重，只留一筆）
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    seen = set()
+    results = []
+
+    # 找出主排班表（每天一個 <tr>，第一個 <td> 是「MM-DD（星期）」）
+    for tr in soup.select("table tr"):
+        tds = tr.find_all("td", recursive=False)
+        if not tds:
+            continue
+        first_text = tds[0].get_text(strip=True)
+        date_val = _row_label_to_date(first_text, query_date)
+        if not date_val:
+            continue
+
+        # 這一列裡所有「未配班」灰底區塊
+        for p in tr.select('p[style*="616161"]'):
+            # 未配班清單裡的人是裸 <span title="...">文字</span>，不在 <a> 裡面
+            # （有被排定的人是 <a href="...schedule/edit..."><span>...</span></a>）
+            for span in p.find_all("span", recursive=True):
+                if span.find_parent("a"):
+                    continue
+                text = span.get_text(strip=True)
+                parsed = parse_lemon_label(text)
+                if not parsed:
+                    continue
+                lemon_name = parsed["name"]
+                dedup_key = (date_val, lemon_name)
+                if dedup_key in seen:
+                    continue
+                seen.add(dedup_key)
+                results.append({
+                    "date": date_val,
+                    "name": lemon_name,
+                    "raw": text,
+                })
+
+    return results
+
+
+def find_unassigned_lemon_bookings(
+    session: requests.Session,
+    query_date: str,
+    ui_logger=None,
+) -> List[Dict]:
+    """
+    抓 /schedule?date=query_date 這一週的清潔班表，回傳「未配班」清單裡出現的
+    檸檬人佔用紀錄（已去重，每個 (date, 檸檬人) 只會出現一次）。
+
+    這個函式只負責「找」，不會清除任何資料。
+    """
+    log = make_logger(ui_logger)
+    url = f"{memo.BASE_URL}/schedule"
+    r = memo.session_get(session, url, params={"date": query_date})
+    r.raise_for_status()
+
+    actual_query_date = _parse_schedule_query_date(r.text, query_date)
+    entries = parse_unassigned_lemon_entries(r.text, actual_query_date)
+
+    log(f"在 {query_date} 所在那週的清潔班表裡，找到 {len(entries)} 筆未配班清單中的檸檬人佔用紀錄")
+    for e in entries:
+        log(f"  - {e['date']}　{e['name']}（原始文字：{e['raw']}）")
+
+    return entries
+
+
+def clear_unassigned_lemon_bookings(
+    session: requests.Session,
+    entries: List[Dict],
+    ui_logger=None,
+) -> List[Dict]:
+    """
+    拿 find_unassigned_lemon_bookings() 的結果，依檸檬人分組，
+    把每個檸檬人在這些日期的整天排班清空並儲存。
+
+    回傳每個檸檬人各自的清空結果（格式同 clear_person_shift_dates）。
+    """
+    log = make_logger(ui_logger)
+
+    by_name: Dict[str, List[str]] = {}
+    for e in entries:
+        by_name.setdefault(e["name"], []).append(e["date"])
+
+    results = []
+    for name, dates in by_name.items():
+        log(f"\n===== 清空檸檬人：{name}（{sorted(set(dates))}）=====")
+        res = clear_person_shift_dates(session, name, sorted(set(dates)), ui_logger=ui_logger)
+        results.append(res)
+
+    return results
