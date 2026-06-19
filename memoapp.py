@@ -11,22 +11,22 @@ st.set_page_config(
 
 st.markdown("""
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700&family=Space+Grotesk:wght@500;700&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=Space+Grotesk:wght@500;700&display=swap');
 
 :root {
     --lemon:       #F5C518;
     --lemon-dark:  #D4A017;
-    --lemon-soft:  #FFFBEA;
+    --lemon-soft:  #FFFCF2;
     --lemon-mid:   #FFF3C4;
     --charcoal:    #1C1C1E;
     --ink:         #3A3A3C;
     --muted:       #8E8E93;
-    --border:      #E5E5EA;
+    --border:      #E8E8EC;
     --surface:     #FFFFFF;
     --success:     #34C759;
     --danger:      #FF3B30;
-    --radius:      14px;
-    --shadow:      0 2px 16px rgba(0,0,0,0.07);
+    --radius:      16px;
+    --shadow:      0 2px 14px rgba(0,0,0,0.05);
 }
 
 html, body, [class*="css"] {
@@ -43,33 +43,33 @@ html, body, [class*="css"] {
 }
 
 .block-container {
-    padding-top: 2rem !important;
-    padding-bottom: 2rem !important;
+    padding-top: 2.2rem !important;
+    padding-bottom: 2.5rem !important;
     max-width: 1180px !important;
 }
 
-/* Hero */
+/* ---------- Hero ---------- */
 
 .hero {
-    background: linear-gradient(135deg, #FFFDF0 0%, #FFFBEA 100%);
+    background: linear-gradient(135deg, #FFFDF5 0%, #FFFBEA 100%);
     border: 1.5px solid var(--lemon-mid);
     border-radius: var(--radius);
-    padding: 2rem 2.5rem 1.6rem;
-    margin-bottom: 2rem;
+    padding: 2.1rem 2.6rem;
+    margin-bottom: 2.2rem;
     display: flex;
     align-items: center;
-    gap: 1.2rem;
-    box-shadow: 0 2px 12px rgba(245,197,24,0.10);
+    gap: 1.3rem;
+    box-shadow: 0 2px 14px rgba(245,197,24,0.08);
 }
 
 .hero-emoji {
-    font-size: 3rem;
+    font-size: 3.1rem;
     line-height: 1;
 }
 
 .hero-title {
     font-family: 'Space Grotesk', sans-serif;
-    font-size: 1.9rem;
+    font-size: 2rem;
     font-weight: 700;
     color: var(--charcoal);
     margin: 0;
@@ -78,39 +78,40 @@ html, body, [class*="css"] {
 
 .hero-sub {
     color: var(--ink);
-    font-size: 0.92rem;
-    margin-top: 0.3rem;
-    opacity: 0.78;
+    font-size: 0.94rem;
+    margin-top: 0.35rem;
+    opacity: 0.75;
+    line-height: 1.6;
 }
 
-/* Step */
+/* ---------- Step pill (numbered section header) ---------- */
 
 .step-pill {
     display: inline-flex;
     align-items: center;
-    gap: 0.5rem;
-    background: var(--lemon-mid);
-    border: 1.5px solid var(--lemon);
+    gap: 0.6rem;
+    background: var(--surface);
+    border: 1.5px solid var(--lemon-mid);
     border-radius: 30px;
-    padding: 0.28rem 0.9rem;
-    font-size: 0.78rem;
-    font-weight: 700;
+    padding: 0.4rem 1.1rem 0.4rem 0.5rem;
+    font-size: 0.98rem;
+    font-weight: 900;
     color: var(--charcoal);
-    margin-bottom: 0.9rem;
-    letter-spacing: 0.02em;
-    text-transform: uppercase;
+    margin-bottom: 1.1rem;
+    box-shadow: 0 2px 8px rgba(245,197,24,0.10);
 }
 
 .step-num {
     background: var(--lemon);
     border-radius: 50%;
-    width: 20px;
-    height: 20px;
+    width: 26px;
+    height: 26px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    font-size: 0.72rem;
-    font-weight: 700;
+    font-size: 0.85rem;
+    font-weight: 900;
+    box-shadow: 0 1px 4px rgba(212,160,23,0.4);
 }
 
 .sec-label {
@@ -124,67 +125,111 @@ html, body, [class*="css"] {
 .info-strip {
     background: var(--lemon-soft);
     border-left: 4px solid var(--lemon);
-    border-radius: 0 8px 8px 0;
-    padding: 0.7rem 1rem;
+    border-radius: 0 10px 10px 0;
+    padding: 0.75rem 1.1rem;
     font-size: 0.9rem;
     color: var(--ink);
     margin-bottom: 1rem;
 }
 
-/* Buttons */
+.info-strip code {
+    background: var(--lemon-mid);
+    color: var(--charcoal);
+    padding: 1px 6px;
+    border-radius: 5px;
+    font-weight: 700;
+}
+
+/* ---------- Field labels ---------- */
+
+.stTextInput label,
+.stSelectbox label,
+.stDateInput label,
+.stNumberInput label,
+.stRadio label,
+.stTextArea label {
+    font-weight: 700 !important;
+    font-size: 14.5px !important;
+    color: var(--charcoal) !important;
+}
+
+/* ---------- Buttons ---------- */
 
 .stButton > button {
     background: var(--lemon) !important;
     color: var(--charcoal) !important;
     border: none !important;
-    border-radius: 10px !important;
+    border-radius: 12px !important;
     font-weight: 700 !important;
     font-family: 'Noto Sans TC', sans-serif !important;
     font-size: 15px !important;
-    padding: 0.55rem 1.2rem !important;
-    transition: background 0.18s, transform 0.12s !important;
-    box-shadow: 0 2px 10px rgba(245,197,24,0.28) !important;
+    padding: 0.6rem 1.2rem !important;
+    transition: background 0.18s, transform 0.12s, box-shadow 0.18s !important;
+    box-shadow: 0 3px 12px rgba(245,197,24,0.30) !important;
 }
 
 .stButton > button:hover {
     background: var(--lemon-dark) !important;
     transform: translateY(-1px) !important;
+    box-shadow: 0 4px 16px rgba(245,197,24,0.40) !important;
 }
 
 .stButton > button[kind="primary"] {
     background: var(--charcoal) !important;
     color: var(--lemon) !important;
-    box-shadow: 0 2px 12px rgba(28,28,30,0.25) !important;
+    box-shadow: 0 3px 14px rgba(28,28,30,0.25) !important;
 }
 
 .stButton > button[kind="primary"]:hover {
     background: #2C2C2E !important;
 }
 
-/* Inputs */
+/* secondary / ghost-style small buttons (used for select-all etc.) */
+button[kind="secondary"] {
+    background: var(--surface) !important;
+    color: var(--charcoal) !important;
+    border: 1.5px solid var(--border) !important;
+    box-shadow: none !important;
+}
+
+/* ---------- Inputs ---------- */
 
 .stTextInput input,
 .stSelectbox > div > div,
 .stDateInput input,
-.stNumberInput input {
-    border-radius: 10px !important;
+.stNumberInput input,
+.stTextArea textarea {
+    border-radius: 12px !important;
     border: 1.5px solid var(--border) !important;
     background: white !important;
     font-size: 15px !important;
 }
 
-.stRadio label {
+.stTextInput input:focus,
+.stNumberInput input:focus,
+.stTextArea textarea:focus {
+    border-color: var(--lemon) !important;
+    box-shadow: 0 0 0 3px rgba(245,197,24,0.18) !important;
+}
+
+.stCheckbox label, .stRadio > div {
     font-weight: 600 !important;
 }
 
-/* Metrics */
+/* ---------- Tabs / radio as segmented control feel ---------- */
+
+div[role="radiogroup"] {
+    gap: 0.4rem;
+}
+
+/* ---------- Metrics ---------- */
 
 [data-testid="stMetric"] {
     background: white;
-    border: 1px solid #ececec;
-    border-radius: 14px;
-    padding: 14px;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px;
+    box-shadow: var(--shadow);
 }
 
 [data-testid="stMetricValue"] {
@@ -192,19 +237,24 @@ html, body, [class*="css"] {
     font-weight: 700;
 }
 
-/* Cards */
+[data-testid="stMetricLabel"] {
+    font-weight: 600;
+    color: var(--muted);
+}
+
+/* ---------- Cards (preview rows) ---------- */
 
 .preview-card {
-    border: 1px solid #ececec;
-    border-radius: 14px;
-    padding: 14px 16px;
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 16px 18px;
     margin-bottom: 12px;
     background: white;
-    box-shadow: 0 2px 12px rgba(0,0,0,0.04);
+    box-shadow: var(--shadow);
 }
 
 .preview-ok {
-    border-left: 6px solid #22c55e;
+    border-left: 6px solid var(--success);
 }
 
 .preview-ng {
@@ -223,7 +273,7 @@ html, body, [class*="css"] {
     line-height: 1.7;
 }
 
-/* Code & Expander */
+/* ---------- Code & Expander ---------- */
 
 [data-testid="stCode"] {
     border-radius: 12px !important;
@@ -235,9 +285,14 @@ html, body, [class*="css"] {
     font-size: 0.95rem !important;
 }
 
+.streamlit-expander {
+    border-radius: var(--radius) !important;
+    border: 1px solid var(--border) !important;
+}
+
 hr {
-    border-color: #e8e8e8 !important;
-    margin: 1.4rem 0 !important;
+    border-color: #ececec !important;
+    margin: 1.6rem 0 !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -481,38 +536,46 @@ def render_preview_blocks(rows):
     return selected_ids
 
 
+# ============================================================
+# Hero
+# ============================================================
+
 st.markdown("""
 <div class="hero">
   <div class="hero-emoji">📝</div>
   <div>
-    <div class="hero-title">Memo 自動回填系統</div>
-    <div class="hero-sub">查詢訂單 → 比對最近來源備註 → 自動回填客服備註 → 更新服務狀態</div>
+    <div class="hero-title">檸檬訂單備忘錄</div>
+    <div class="hero-sub">從歷史訂單抓取最近一筆同電話、同地址、已付款、已處理且有客服備註的訂單，回填到目前未處理訂單。</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
 
-step("1", "登入系統")
+# ============================================================
+# Step 1：登入與環境設定
+# ============================================================
 
-col_e, col_p, col_env, col_login, col_unlock = st.columns([3.0, 3.0, 1.2, 1.2, 1.2])
+step("1", "登入與環境設定")
+
+col_e, col_p, col_env = st.columns([2.4, 2.4, 1.2])
 
 with col_e:
-    email = st.text_input("Email")
+    email = st.text_input("後台帳號", placeholder="jenny@lemonclean.com.tw")
 
 with col_p:
-    password = st.text_input("Password", type="password")
+    password = st.text_input("後台密碼", type="password")
 
 with col_env:
     env_option = st.selectbox("環境", ["prod", "dev"], index=0)
 
+memo.set_env(env_option)
+
+col_login, col_unlock, col_status = st.columns([1, 1, 4])
+
 with col_login:
-    st.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
-    login_clicked = st.button("Login", use_container_width=True)
+    login_clicked = st.button("🔐 Login", use_container_width=True)
 
 with col_unlock:
-    st.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
     unlock_clicked = st.button("解除鎖定", use_container_width=True)
-
-memo.set_env(env_option)
 
 if unlock_clicked:
     st.session_state.is_running = False
@@ -547,15 +610,24 @@ if login_clicked:
     finally:
         st.session_state.is_running = False
 
-if st.session_state.is_logged_in:
-    st.markdown(
-        f'<div class="info-strip">✅ 已登入：<strong>{st.session_state.login_identity}</strong></div>',
-        unsafe_allow_html=True
-    )
-else:
-    st.info("請先登入後再查詢或執行。")
+with col_status:
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+    if st.session_state.is_logged_in:
+        st.markdown(
+            f'<div class="info-strip">✅ 已登入：<strong>{st.session_state.login_identity}</strong>（環境：<code>{env_option}</code>）</div>',
+            unsafe_allow_html=True
+        )
+    else:
+        st.markdown(
+            '<div class="info-strip">⚠️ 尚未登入，請先輸入帳密並點擊 Login。</div>',
+            unsafe_allow_html=True
+        )
 
 st.markdown("---")
+
+# ============================================================
+# Step 2：設定查詢條件
+# ============================================================
 
 step("2", "設定查詢條件")
 
@@ -591,10 +663,15 @@ if mode == "By Google Sheet":
     )
 
     if sheet_run_mode == "指定列號":
+        st.markdown(
+            '<div class="info-strip">列號支援：單列 <code>2</code>、逗號分隔 <code>2,3,5</code>、區間 <code>2,3,5-7</code></div>',
+            unsafe_allow_html=True
+        )
+
         c1, c2 = st.columns([5, 1])
 
         with c1:
-            row_spec = st.text_input("列號（例：2,3,5-8）")
+            row_spec = st.text_input("列號")
 
         with c2:
             st.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
@@ -637,9 +714,9 @@ if mode == "By Google Sheet":
         )
 
 elif mode == "By 電話":
-    phone_text = st.text_input(
-        "電話號碼（可輸入多筆，用逗號分隔）",
-        placeholder="例：0912345678,0922345678"
+    phone_text = st.text_area(
+        "電話號碼",
+        placeholder="可輸入多支，以逗號或換行分隔，例：0912345678,0922345678"
     )
 
     st.caption("會先找出「目標訂單」，再比對最近一筆可參照的來源訂單。")
@@ -699,7 +776,7 @@ else:
             disabled=not st.session_state.is_logged_in
         )
 
-with st.expander("4. 執行過程", expanded=True):
+with st.expander("執行 LOG", expanded=True):
     log_box = st.empty()
     log_box.code(
         "\n".join(st.session_state.logs[-3000:])
