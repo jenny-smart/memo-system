@@ -207,9 +207,62 @@ def build_cleaner_directory(session: requests.Session, force_refresh: bool = Fal
     return directory
 
 
+def search_cleaner1_by_keyword(session: requests.Session, keyword: str) -> Dict[str, str]:
+    """
+    用 /cleaner1?keyword=... 的搜尋表單查詢，回傳這次搜尋結果裡的 {姓名: 專員ID}。
+    ID 是從每筆資料「排班」按鈕的連結 .../cleaner1/{id}/shift 取出來的。
+    """
+    url = f"{memo.BASE_URL}/cleaner1"
+    r = memo.session_get(session, url, params={"keyword": keyword})
+    r.raise_for_status()
+
+    soup = BeautifulSoup(r.text, "html.parser")
+    results = {}
+
+    for tr in soup.select("table tbody tr"):
+        tds = tr.find_all("td", recursive=False)
+        if len(tds) < 2:
+            continue
+
+        # 姓名是第二欄裡的第一行文字（後面接著「居家專員」、電話、email，用 <br> 分隔）
+        name_td = tds[1]
+        lines = name_td.get_text(separator="\n", strip=True).split("\n")
+        name = lines[0].strip() if lines else ""
+
+        shift_link = tr.select_one('a[href*="/shift"]')
+        if not name or not shift_link:
+            continue
+
+        m = re.search(r"/cleaner1/(\d+)/shift", shift_link.get("href", ""))
+        if not m:
+            continue
+
+        results[name] = m.group(1)
+
+    return results
+
+
 def find_cleaner_id_by_name(session: requests.Session, name: str) -> Optional[str]:
+    """
+    先查 /schedule 下拉選單的快取（涵蓋大部分人，速度快）；
+    沒找到的話，改用 /cleaner1?keyword=姓名 搜尋當 fallback
+    （/schedule 的下拉選單實際上並沒有涵蓋全部 29 頁的專員，只是大部分而已）。
+    """
+    global _CLEANER_NAME_TO_ID_CACHE
+
     directory = build_cleaner_directory(session)
-    return directory.get(name)
+    if name in directory:
+        return directory[name]
+
+    try:
+        found = search_cleaner1_by_keyword(session, name)
+    except Exception:
+        found = {}
+
+    if found:
+        _CLEANER_NAME_TO_ID_CACHE.update(found)
+
+    return _CLEANER_NAME_TO_ID_CACHE.get(name)
 
 
 # -----------------------------------------------------------------------------
