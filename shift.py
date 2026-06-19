@@ -48,6 +48,35 @@ TYPE_MAP = {
 CLEAR_TYPE = "清"
 ALL_SLOTS = ["all", "1", "2", "3"]
 
+# -----------------------------------------------------------------------------
+# Slot 衝突規則
+# -----------------------------------------------------------------------------
+# 業務規則：
+# - 全6 / 全8（slot="all"）跟 上午（slot="1"）、下午（slot="2"）互斥：
+#   勾了全天班就不能再勾上午或下午；反過來勾了上午或下午，就不能再勾全天班。
+# - 上午（slot="1"）跟 下午（slot="2"）彼此「不」衝突，可以同時勾（例如上2 +下午）。
+# - 晚上（slot="3"）目前沒有業務規則說會跟誰衝突，視為獨立 slot。
+CONFLICT_MAP = {
+    "all": {"1", "2"},
+    "1": {"all"},
+    "2": {"all"},
+    "3": set(),
+}
+
+
+def get_conflicting_slot_keys(existing: Dict[str, str], date_val: str, slot: str) -> Dict[str, str]:
+    """
+    檢查 existing（某人某月已勾選的 dict）裡，在 date_val 這天，
+    有沒有跟 slot 互相衝突、且「已經被勾選」的項目。
+    回傳 {衝突的 slot_key: 已勾選的值}，沒有衝突就回傳空 dict。
+    """
+    conflicts = {}
+    for conflicting_slot in CONFLICT_MAP.get(slot, set()):
+        key = f"{date_val}_{conflicting_slot}"
+        if key in existing:
+            conflicts[key] = existing[key]
+    return conflicts
+
 
 def make_logger(ui_logger: Optional[Callable[[str], None]] = None):
     def _log(msg: str):
@@ -320,18 +349,28 @@ def find_available_lemon_ren(
 
         token, existing = get_shift_page_state(session, cleaner_id, month)
 
+        occupied_reason = None
+
         if slot_key in existing:
+            occupied_reason = f"{date_val} 的「{type_val}」時段本身已被勾選（{existing[slot_key]}）"
+        else:
+            conflicts = get_conflicting_slot_keys(existing, date_val, slot)
+            if conflicts:
+                conflict_desc = "、".join(f"{k}={v}" for k, v in conflicts.items())
+                occupied_reason = f"{date_val} 已有跟「{type_val}」互斥的勾選（{conflict_desc}），不能再勾"
+
+        if occupied_reason:
             if log:
-                log(f"⏭ {lemon_name}（id={cleaner_id}）{date_val} 的「{type_val}」時段已被佔用（{existing[slot_key]}），往下一位找")
+                log(f"⏭ {lemon_name}（id={cleaner_id}）{occupied_reason}，往下一位找")
             checked_candidates.append({
                 "name": lemon_name,
                 "cleaner_id": cleaner_id,
-                "occupied_value": existing[slot_key],
+                "occupied_value": existing.get(slot_key, occupied_reason),
             })
             continue
 
         if log:
-            log(f"✅ 找到空檔：{lemon_name}（id={cleaner_id}），{date_val} 的「{type_val}」目前是空的")
+            log(f"✅ 找到空檔：{lemon_name}（id={cleaner_id}），{date_val} 的「{type_val}」目前是空的且無衝突")
 
         return {
             "found": True,
@@ -389,6 +428,32 @@ def confirm_lemon_ren_assignment(session: requests.Session, candidate: Dict, log
     return merged
 
 
+def check_merged_conflicts(merged: Dict[str, str]) -> List[str]:
+    """
+    檢查合併後的結果裡，有沒有同一天「全天」跟「上午/下午」同時被勾選的衝突。
+    回傳警告訊息列表（不會阻擋執行，只是提醒，因為合併邏輯本身是「新匯入蓋過舊的」，
+    衝突通常代表匯入檔或既有資料有問題，需要人工確認）。
+    """
+    warnings = []
+
+    # 整理出每個日期目前有哪些 slot 被勾
+    by_date: Dict[str, Dict[str, str]] = {}
+    for key, value in merged.items():
+        date_val, slot = key.rsplit("_", 1)
+        by_date.setdefault(date_val, {})[slot] = value
+
+    for date_val, slots in by_date.items():
+        for slot, value in slots.items():
+            for conflicting_slot in CONFLICT_MAP.get(slot, set()):
+                if conflicting_slot in slots:
+                    pair = tuple(sorted([slot, conflicting_slot]))
+                    msg = f"⚠️ {date_val} 同時勾選了 {pair[0]}={slots[pair[0]]} 跟 {pair[1]}={slots[pair[1]]}，這兩個互斥，請確認"
+                    if msg not in warnings:
+                        warnings.append(msg)
+
+    return warnings
+
+
 # -----------------------------------------------------------------------------
 # 主流程：處理整份匯入檔
 # -----------------------------------------------------------------------------
@@ -436,6 +501,11 @@ def process_import_file(rows: List[Dict], dry_run: bool = True, ui_logger=None) 
 
                 if clear_dates:
                     log(f"[{name} {month}] 將清空日期：{sorted(clear_dates)}")
+
+                conflict_warnings = check_merged_conflicts(merged)
+                for w in conflict_warnings:
+                    log(f"[{name} {month}] {w}")
+                    result["errors"].append(f"[{name} {month}] {w}")
 
                 if dry_run:
                     log(f"[{name} {month}] DRY RUN，合併後共 {len(merged)} 筆，不會送出")
