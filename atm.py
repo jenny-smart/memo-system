@@ -4,7 +4,7 @@
 ATM 對帳自動化模組
 
 流程：
-1. 從台北/台中 ATM Google Sheet 讀取要處理的列號，取得 J 欄（訂單編號）
+1. 從台北/台中 ATM Google Sheet（分頁名稱固定為「ATM」）讀取要處理的列號，取得 J 欄（訂單編號）
 2. 用訂單編號去 https://backend.lemonclean.com.tw/purchase 搜尋，
    從頁面內嵌的 Vue purchaseList JSON 拿到該筆訂單的 purchase_id / 付款狀態等資訊
 3. 依序執行：
@@ -36,6 +36,9 @@ ATM_SHEET_IDS = {
     "台北": "1bNcJuFuP--jdpNo2zJKOpvuq-5rSHW3LgGE8HEepf44",
     "台中": "1AlsgBL7uAooiU8hb0v-02J2MdBgDVJtGHgvD3U84hCM",
 }
+
+# 兩份 ATM Sheet 實際要處理的分頁名稱都是「ATM」
+ATM_WORKSHEET_TITLE = "ATM"
 
 # 欄位位置（1-based）：J=10, P=16, Q=17, R=18
 COL_ORDER_NO = 10
@@ -86,14 +89,13 @@ def get_atm_spreadsheet(sheet_id: str):
 def get_atm_worksheet(region: str):
     """
     region: "台北" 或 "台中"
-    ⚠️ 預設抓第一個工作表（gid=0），如果 ATM Sheet 實際分頁名稱不是第一個，
-    需要再調整這裡。
+    固定抓分頁名稱「ATM」（台北、台中兩份 Sheet 的分頁名稱都一樣）。
     """
     if region not in ATM_SHEET_IDS:
         raise ValueError(f"未知地區「{region}」，目前支援：{list(ATM_SHEET_IDS.keys())}")
 
     sh = get_atm_spreadsheet(ATM_SHEET_IDS[region])
-    return sh.get_worksheet(0)
+    return sh.worksheet(ATM_WORKSHEET_TITLE)
 
 
 # -----------------------------------------------------------------------------
