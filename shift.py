@@ -733,6 +733,7 @@ def clear_person_shift_dates(
             token, existing = get_shift_page_state(session, cleaner_id, month)
 
             removed_keys = []
+            month_cleared_dates = []
             for d in dates:
                 day_had_entry = False
                 for slot in ALL_SLOTS:
@@ -742,6 +743,7 @@ def clear_person_shift_dates(
                         day_had_entry = True
                 if day_had_entry:
                     result["cleared_dates"].append(d)
+                    month_cleared_dates.append(d)
                 else:
                     result["untouched_dates"].append(d)
 
@@ -749,7 +751,11 @@ def clear_person_shift_dates(
             submit_shift_payload(session, cleaner_id, token, merged)
 
             result["cleared_slot_count"] += len(removed_keys)
-            log(f"✅ [{name} {month}] 已清空 {sorted(dates)}，移除 {len(removed_keys)} 筆既有勾選：{removed_keys}")
+
+            if month_cleared_dates:
+                log(f"✅ [{name} {month}] 已清空 {sorted(month_cleared_dates)}，移除 {len(removed_keys)} 筆既有勾選：{removed_keys}")
+            else:
+                log(f"ℹ️ [{name} {month}] 查詢範圍內這個月沒有任何已勾選的排班，無需清空")
 
         except Exception as e:
             msg = f"❌ [{name} {month}] 清空失敗：{e}"
