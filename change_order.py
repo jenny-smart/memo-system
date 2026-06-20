@@ -169,6 +169,8 @@ STATUS_DONE_REFUND = "已退款"
 TYPE_FARE = "車馬費發票"
 TYPE_CHARGE = "異動服務收款"
 TYPE_REFUND = "異動服務退款"
+TYPE_COMPLAINT_REFUND = "客訴退款"
+TYPE_DAMAGE_REFUND = "物損退款"
 
 
 # ============================================================
@@ -491,8 +493,37 @@ def build_reducetime_row(order: dict, time_fee_info: dict, service_note: str,
 
 
 # ============================================================
-# 階段 A-4：寫入 Google Sheet
+# 階段 A-3c：客訴 / 物損退款（金額人工輸入）
 # ============================================================
+
+def build_manual_refund_row(order: dict, amount, refund_type_label: str, service_note: str,
+                             customer_type: str = "一般", service_date: date = None,
+                             today: date = None) -> dict:
+    """
+    客訴 / 物損退款：金額由人工輸入（沒有固定公式），狀態固定「待退款」，
+    其餘欄位結構同異動待退款。refund_type_label 寫入 C 欄（細項），
+    例如 TYPE_COMPLAINT_REFUND（客訴退款）或 TYPE_DAMAGE_REFUND（物損退款）。
+    """
+    amount = round(amount or 0)
+    i_value = _format_service_datetime(service_date, order.get("period_text", ""))
+    j_value = (
+        f"{refund_type_label}，{service_note}，退費 ${amount}"
+        if service_note else
+        f"{refund_type_label}，退費 ${amount}"
+    )
+    return {
+        "A": "清潔", "B": STATUS_PENDING_REFUND, "C": refund_type_label,
+        "E": (today or date.today()).strftime("%Y/%m/%d"),
+        "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
+        "I": i_value,
+        "J": j_value,
+        "R": "信用卡" if order.get("payway") != "儲值金" else "儲值金",
+        "S": amount,
+        "X": order.get("invoice_no", ""),
+        "Y": "三聯" if order.get("carrier_type") == "三聯式" else "二聯",
+        "_calc_amount": amount,
+        "_calc_note": f"{refund_type_label}（人工輸入金額）= ${amount}",
+    }
 
 def append_rows_to_sheet(region: str, rows: list, ui_logger=None):
     """
