@@ -7,9 +7,9 @@
   階段 A：fetch_and_calc()  → 查訂單 + 試算金額 → 寫入「清潔異動工作表」
   階段 B：sync_pending_rows() → 讀「清潔異動工作表」待處理列 → 回填後台 purchase/edit → 更新 Sheet 狀態
 
-本檔案只負責「清潔異動」這條業務邏輯，網路登入 session、CSRF 處理、
-Google Sheet 連線方式，沿用 memo.py / shift.py / atm.py 既有的共用函式
-（請依您現有的命名把下方標示 TODO 的地方接上）。
+本檔案只負責「清潔異動」這條業務邏輯，網路登入 session、CSRF 處理沿用
+memo.py / shift.py / atm.py 既有的共用函式。Google Sheet 連線方式比照
+memo.py 用 gspread + Service Account。
 """
 
 import re
@@ -18,17 +18,114 @@ from datetime import datetime, date, timedelta
 
 import requests
 from bs4 import BeautifulSoup
+import gspread
+from google.oauth2.service_account import Credentials
+
+try:
+    import streamlit as st
+except Exception:
+    st = None
 
 BASE_URL = "https://backend.lemonclean.com.tw"
 
-# TODO: 接上您現有寫 Google Sheet 用的工具（atm.py 的 paste_atm_unpaid_list 應該已經有一套）
-# from sheets_client import get_worksheet
+
+# ============================================================
+# Google Sheet 連線（比照 memo.py 用 service account）
+# ============================================================
+
+# 兩個地區各自的清潔異動工作表（Sheet ID 取自您提供的網址）
+SHEET_IDS = {
+    "台北": "1bNcJuFuP--jdpNo2zJKOpvuq-5rSHW3LgGE8HEepf44",
+    "台中": "1AlsgBL7uAooiU8hb0v-02J2MdBgDVJtGHgvD3U84hCM",
+}
+
+# 對應網址列上的 gid，用來精準定位分頁（比用分頁名稱比對更穩，不怕改名）
+SHEET_GIDS = {
+    "台北": 759897417,
+    "台中": 0,
+}
+
+_SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets",
+    "https://www.googleapis.com/auth/drive",
+]
+
+_gspread_client = None
+
+
+def _secret_value(key, default=""):
+    if st is None:
+        return default
+    try:
+        return st.secrets.get(key, default)
+    except Exception:
+        return default
+
+
+def _get_gspread_client():
+    """
+    建立（並快取）gspread client。
+    服務帳號設定比照 memo.py：優先讀 st.secrets["gcp_service_account"]（TOML 區塊），
+    沒有的話再試 st.secrets["GOOGLE_SERVICE_ACCOUNT"]（整包 JSON 字串）。
+    若您 memo.py 用的 key 名稱不同，請把下面兩個 _secret_value(...) 的 key 改成一致即可。
+    """
+    global _gspread_client
+    if _gspread_client is not None:
+        return _gspread_client
+
+    if st is None:
+        raise RuntimeError("找不到 streamlit，無法讀取 st.secrets 取得 Google 憑證")
+
+    sa_info = None
+
+    # 寫法一：st.secrets 裡有一個 [gcp_service_account] 區塊（dict-like）
+    try:
+        block = st.secrets.get("gcp_service_account", None)
+        if block:
+            sa_info = dict(block)
+    except Exception:
+        sa_info = None
+
+    # 寫法二：st.secrets 裡是一整包 JSON 字串
+    if not sa_info:
+        raw = _secret_value("GOOGLE_SERVICE_ACCOUNT", "")
+        if raw:
+            import json
+            sa_info = json.loads(raw)
+
+    if not sa_info:
+        raise RuntimeError(
+            "找不到 Google 服務帳號憑證，請確認 secrets.toml 裡有 [gcp_service_account] "
+            "或 GOOGLE_SERVICE_ACCOUNT（JSON 字串），命名請跟 memo.py 現有設定一致"
+        )
+
+    creds = Credentials.from_service_account_info(sa_info, scopes=_SCOPES)
+    _gspread_client = gspread.authorize(creds)
+    return _gspread_client
+
+
 def get_worksheet(region: str, tab_name: str = "清潔異動"):
     """
     依地區回傳對應的 gspread worksheet 物件。
-    台北 / 台中 各自一份「清潔異動工作表」，請接上您現有的 sheets client。
+    優先用 gid（SHEET_GIDS）精準定位分頁；若該地區沒有設定 gid，
+    退而用 tab_name 嘗試找同名分頁，最後 fallback 用該試算表第一個分頁。
     """
-    raise NotImplementedError("請接上現有的 Google Sheet 連線工具（同 atm.py 寫入 ATM 對帳表的方式）")
+    if region not in SHEET_IDS:
+        raise ValueError(f"不支援的地區：{region}（目前支援：{list(SHEET_IDS.keys())}）")
+
+    client = _get_gspread_client()
+    sh = client.open_by_key(SHEET_IDS[region])
+
+    gid = SHEET_GIDS.get(region)
+    if gid is not None:
+        for ws in sh.worksheets():
+            if ws.id == gid:
+                return ws
+
+    try:
+        return sh.worksheet(tab_name)
+    except gspread.exceptions.WorksheetNotFound:
+        return sh.get_worksheet(0)
 
 
 # ============================================================
@@ -269,7 +366,7 @@ def build_refund_row(order: dict, change_fee_info: dict, service_note: str,
 
 
 # ============================================================
-# 階段 A-4：寫入 Google Sheet（Dry Run 先回傳，不在這裡直接寫）
+# 階段 A-4：寫入 Google Sheet
 # ============================================================
 
 def append_rows_to_sheet(region: str, rows: list, ui_logger=None):
