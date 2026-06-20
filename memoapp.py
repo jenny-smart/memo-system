@@ -343,6 +343,9 @@ DEFAULT_STATE = {
     # 清潔異動相關 state
     "co_calc_rows": [],
     "co_pending_rows": [],
+    "co_phone_orders": [],
+    "co_selected_order_no": "",
+    "co_selected_order_detail": None,
     # 已登入的 requests.Session 物件，登入一次後重複使用，
     # 之後每個功能執行時優先重用這個 session，不存在才會去登入。
     "auth_session": None,
@@ -1789,19 +1792,109 @@ SCENARIO_OPTIONS = [
 
 
 def render_change_order_stage_a():
-    step("3", "輸入要查詢試算的訂單")
+    step("3", "輸入電話，查詢最近一次已付款訂單")
 
     st.markdown(
-        '<div class="info-strip">支援「電話」或「訂單編號」查詢，可一次輸入多筆（逗號或換行分隔）。'
-        '查到資料後會試算車馬費／異動費／應退款／加時／減時金額，確認沒問題再寫入清潔異動工作表。'
-        '加時／減時：平日每人時 $600，週末（六、日）每人時 $700，其餘欄位結構同異動待收款／待退款。</div>',
+        '<div class="info-strip">輸入電話查詢，會找出「最近一次服務日期」且狀態為「已付款」的訂單；'
+        '若同一天有多筆（可能是合併訂單），會全部列出讓您勾選。'
+        '也可以切換成「訂單編號」直接指定單一筆。選好訂單後，再往下做異動判斷'
+        '（車馬費／異動／加時／減時／客訴／物損）。</div>',
         unsafe_allow_html=True
     )
 
     c1, c2 = st.columns([1, 1.5])
     with c1:
         region = st.selectbox("地區", ["台北", "台中"], key="co_region_a")
-        query_by = st.radio("查詢方式", ["訂單編號", "電話"], horizontal=True, key="co_query_by")
+        query_by = st.radio("查詢方式", ["電話", "訂單編號"], horizontal=True, key="co_query_by")
+
+    with c2:
+        if query_by == "電話":
+            keyword_input = st.text_input(
+                "電話", placeholder="例：0912345678", key="co_phone_keyword"
+            )
+        else:
+            keyword_input = st.text_input(
+                "訂單編號", placeholder="例：LC00211483", key="co_orderno_keyword"
+            )
+
+    search_btn = st.button(
+        "🔍 查詢訂單",
+        use_container_width=True,
+        disabled=not (st.session_state.credentials_ready and keyword_input.strip()),
+    )
+
+    with st.expander("執行 LOG", expanded=True):
+        log_box_local = st.empty()
+        log_box_local.code(
+            "\n".join(st.session_state.logs[-3000:]) if st.session_state.logs else "尚未執行"
+        )
+
+    def co_log(msg):
+        st.session_state.logs.append(str(msg))
+        try:
+            log_box_local.code("\n".join(st.session_state.logs[-3000:]))
+        except Exception:
+            pass
+
+    if search_btn:
+        try:
+            st.session_state.logs = []
+            st.session_state.co_phone_orders = []
+            st.session_state.co_calc_rows = []
+            co_log("===== 開始查詢訂單 =====")
+
+            with st.spinner("查詢中，請稍候…"):
+                session = get_session(ui_logger=co_log)
+
+                if query_by == "電話":
+                    orders = change_order.fetch_recent_paid_orders_by_phone(
+                        keyword_input.strip(), session=session, ui_logger=co_log
+                    )
+                else:
+                    single = change_order.fetch_order_basic(
+                        keyword_input.strip(), session=session, ui_logger=co_log, by="orderNo"
+                    )
+                    orders = [single] if single else []
+
+            st.session_state.co_phone_orders = orders
+            co_log(f"✅ 查詢完成，共 {len(orders)} 筆")
+            st.rerun()
+
+        except Exception as e:
+            co_log(f"❌ 查詢失敗：{e}")
+            st.error(str(e))
+
+    orders = st.session_state.get("co_phone_orders", [])
+
+    if not orders:
+        return
+
+    st.markdown("---")
+    step("4", "選擇要異動的訂單（可複選，同日合併訂單可一起套用）")
+
+    selected_orders = []
+    for o in orders:
+        service_date_text = (
+            o["service_date"].strftime("%Y-%m-%d") if o.get("service_date") else "（無日期資訊）"
+        )
+        label = (
+            f"{o['order_no']}　{o.get('customer_name','')}　"
+            f"服務日期：{service_date_text}　時數：{o.get('service_hours',0)}小時　"
+            f"人數：{o.get('cleaner_count',0)}人　總金額：${o.get('total',0)}"
+        )
+        checked = st.checkbox(label, value=True, key=f"co_order_pick_{o['order_no']}")
+        if checked:
+            selected_orders.append(o)
+
+    if not selected_orders:
+        st.info("請至少勾選一筆訂單再繼續。")
+        return
+
+    st.markdown("---")
+    step("5", "選擇異動情境")
+
+    c1, c2 = st.columns([1, 1.5])
+    with c1:
         scenario = st.radio("情境", SCENARIO_OPTIONS, key="co_scenario")
 
         is_time_change = scenario in ("加時（待收款）", "減時（待退款）")
@@ -1824,126 +1917,100 @@ def render_change_order_stage_a():
             )
 
     with c2:
-        keywords_text = st.text_area(
-            "訂單編號 / 電話清單",
-            placeholder="一行一筆，例如：\nLC00211084\nLC00211081",
-            key="co_keywords"
-        )
         customer_type = st.selectbox("客戶類別", ["一般", "VIP"], key="co_customer_type")
-        service_date_input = st.date_input("服務日期（用於計算工作天數／平日假日）", value=date.today(), key="co_service_date")
+        default_service_date = selected_orders[0].get("service_date") or date.today()
+        service_date_input = st.date_input(
+            "服務日期（用於計算工作天數／平日假日，預設取自所選訂單）",
+            value=default_service_date, key="co_service_date"
+        )
         service_note = st.text_input("服務註記（寫入 J 欄）", placeholder="例：客通知停水異動服務", key="co_service_note")
 
-    query_btn = st.button(
-        "🔍 查詢並試算",
+    calc_btn = st.button(
+        "🧮 試算",
         use_container_width=True,
-        disabled=not (st.session_state.credentials_ready and keywords_text.strip()),
+        disabled=not st.session_state.credentials_ready,
     )
 
-    with st.expander("執行 LOG", expanded=True):
-        log_box_local = st.empty()
-        log_box_local.code(
-            "\n".join(st.session_state.logs[-3000:]) if st.session_state.logs else "尚未執行"
-        )
-
-    def co_log(msg):
-        st.session_state.logs.append(str(msg))
+    if calc_btn:
         try:
-            log_box_local.code("\n".join(st.session_state.logs[-3000:]))
-        except Exception:
-            pass
-
-    if query_btn:
-        try:
-            st.session_state.logs = []
-            st.session_state.co_calc_rows = []
-            co_log("===== 開始查詢試算 =====")
-
-            keywords = [k.strip() for k in re.split(r"[,\n，]", keywords_text) if k.strip()]
-            by = "orderNo" if query_by == "訂單編號" else "phone"
-
+            co_log("===== 開始試算 =====")
             calc_rows = []
-            with st.spinner("查詢中，請稍候…"):
-                session = get_session(ui_logger=co_log)
 
-                for kw in keywords:
-                    order = change_order.fetch_order_basic(kw, session=session, ui_logger=co_log, by=by)
-                    if not order:
-                        continue
-
-                    if scenario == "僅開車馬費發票":
-                        row = change_order.build_fare_row(order, service_date=service_date_input)
-                        calc_rows.append(row)
-                        continue
-
-                    if scenario == "加時（待收款）":
-                        time_fee_info = change_order.calc_time_change_fee(
-                            service_date_input, hours=change_hours, person=change_person
-                        )
-                        row = change_order.build_addtime_row(
-                            order, time_fee_info, service_note, customer_type=customer_type,
-                            service_date=service_date_input
-                        )
-                        calc_rows.append(row)
-                        continue
-
-                    if scenario == "減時（待退款）":
-                        time_fee_info = change_order.calc_time_change_fee(
-                            service_date_input, hours=change_hours, person=change_person
-                        )
-                        row = change_order.build_reducetime_row(
-                            order, time_fee_info, service_note, customer_type=customer_type,
-                            service_date=service_date_input
-                        )
-                        calc_rows.append(row)
-                        continue
-
-                    if scenario == "客訴（待退款）":
-                        row = change_order.build_manual_refund_row(
-                            order, manual_amount, change_order.TYPE_COMPLAINT_REFUND,
-                            service_note, customer_type=customer_type,
-                            service_date=service_date_input
-                        )
-                        calc_rows.append(row)
-                        continue
-
-                    if scenario == "物損（待退款）":
-                        row = change_order.build_manual_refund_row(
-                            order, manual_amount, change_order.TYPE_DAMAGE_REFUND,
-                            service_note, customer_type=customer_type,
-                            service_date=service_date_input
-                        )
-                        calc_rows.append(row)
-                        continue
-
-                    fee_info = change_order.calc_change_fee(
-                        order, service_date=service_date_input
-                    )
-
-                    if scenario == "異動（待收款）":
-                        row = change_order.build_charge_row(
-                            order, fee_info, service_note, customer_type=customer_type,
-                            service_date=service_date_input
-                        )
-                    else:
-                        row = change_order.build_refund_row(
-                            order, fee_info, service_note, customer_type=customer_type,
-                            service_date=service_date_input
-                        )
+            for order in selected_orders:
+                if scenario == "僅開車馬費發票":
+                    row = change_order.build_fare_row(order, service_date=service_date_input)
                     calc_rows.append(row)
+                    continue
+
+                if scenario == "加時（待收款）":
+                    time_fee_info = change_order.calc_time_change_fee(
+                        service_date_input, hours=change_hours, person=change_person
+                    )
+                    row = change_order.build_addtime_row(
+                        order, time_fee_info, service_note, customer_type=customer_type,
+                        service_date=service_date_input
+                    )
+                    calc_rows.append(row)
+                    continue
+
+                if scenario == "減時（待退款）":
+                    time_fee_info = change_order.calc_time_change_fee(
+                        service_date_input, hours=change_hours, person=change_person
+                    )
+                    row = change_order.build_reducetime_row(
+                        order, time_fee_info, service_note, customer_type=customer_type,
+                        service_date=service_date_input
+                    )
+                    calc_rows.append(row)
+                    continue
+
+                if scenario == "客訴（待退款）":
+                    row = change_order.build_manual_refund_row(
+                        order, manual_amount, change_order.TYPE_COMPLAINT_REFUND,
+                        service_note, customer_type=customer_type,
+                        service_date=service_date_input
+                    )
+                    calc_rows.append(row)
+                    continue
+
+                if scenario == "物損（待退款）":
+                    row = change_order.build_manual_refund_row(
+                        order, manual_amount, change_order.TYPE_DAMAGE_REFUND,
+                        service_note, customer_type=customer_type,
+                        service_date=service_date_input
+                    )
+                    calc_rows.append(row)
+                    continue
+
+                fee_info = change_order.calc_change_fee(
+                    order, service_date=service_date_input
+                )
+
+                if scenario == "異動（待收款）":
+                    row = change_order.build_charge_row(
+                        order, fee_info, service_note, customer_type=customer_type,
+                        service_date=service_date_input
+                    )
+                else:
+                    row = change_order.build_refund_row(
+                        order, fee_info, service_note, customer_type=customer_type,
+                        service_date=service_date_input
+                    )
+                calc_rows.append(row)
 
             st.session_state.co_calc_rows = calc_rows
             co_log(f"✅ 試算完成，共 {len(calc_rows)} 筆")
             st.rerun()
 
         except Exception as e:
-            co_log(f"❌ 查詢試算失敗：{e}")
+            co_log(f"❌ 試算失敗：{e}")
             st.error(str(e))
 
     calc_rows = st.session_state.get("co_calc_rows", [])
 
     if calc_rows:
         st.markdown("---")
-        step("4", "試算結果預覽（尚未寫入 Sheet）")
+        step("6", "試算結果預覽（尚未寫入 Sheet）")
 
         for row in calc_rows:
             st.markdown(f"""
@@ -1977,6 +2044,7 @@ def render_change_order_stage_a():
                 else:
                     st.success(f"✅ 已寫入 {result['written']} 筆，從第 {result['start_row']} 列開始")
                     st.session_state.co_calc_rows = []
+                    st.session_state.co_phone_orders = []
 
             except Exception as e:
                 co_log(f"❌ 寫入失敗：{e}")
