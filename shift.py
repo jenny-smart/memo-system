@@ -524,27 +524,36 @@ def find_available_lemon_ren(
 def confirm_lemon_ren_assignment(session: requests.Session, candidate: Dict, log=None):
     """
     拿 find_available_lemon_ren() 回傳的 candidate，實際送出勾選。
-    會重新合併 existing + 新的 slot_key/value，再 submit。
 
-    （不重新整頁 GET 一次最新狀態，是因為通常找到空檔後會緊接著呼叫這個函式，
-    時間差很短；如果中間隔了很久，建議呼叫前重新跑一次 find_available_lemon_ren
-    確認還是空的，避免兩個人同時搶同一個檸檬人時段。）
+    ⚠️ 一定要用「目前這個 session」重新抓一次最新的 _token 跟既有勾選狀態再送出，
+    不能沿用 candidate 裡存的舊 token——CSRF token 是綁在 session 上的，
+    如果呼叫端在找到空檔後又重新 login（產生新的 session），
+    舊 token 對新 session 來說會是無效的，後端會回 419。
+    重新抓一次也順便確認該時段在這段時間內還是空的，避免兩個人同時搶同一個檸檬人時段。
     """
     if not candidate.get("found"):
         raise RuntimeError("沒有找到可用的檸檬人，無法勾選")
 
-    merged = dict(candidate["existing"])
-    merged[candidate["slot_key"]] = candidate["value"]
+    cleaner_id = candidate["cleaner_id"]
+    month = candidate["month"]
+    slot_key = candidate["slot_key"]
+    value = candidate["value"]
 
-    submit_shift_payload(
-        session,
-        candidate["cleaner_id"],
-        candidate["token"],
-        merged,
-    )
+    token, existing = get_shift_page_state(session, cleaner_id, month)
+
+    if slot_key in existing:
+        raise RuntimeError(
+            f"「{candidate['name']}」的 {slot_key} 在送出前已經被勾選為 {existing[slot_key]}，"
+            f"可能被別人搶先一步，請重新查詢空檔"
+        )
+
+    merged = dict(existing)
+    merged[slot_key] = value
+
+    submit_shift_payload(session, cleaner_id, token, merged)
 
     if log:
-        log(f"✅ 已將「{candidate['name']}」於 {candidate['slot_key']} 勾選為 {candidate['value']} 並儲存")
+        log(f"✅ 已將「{candidate['name']}」於 {slot_key} 勾選為 {value} 並儲存")
 
     return merged
 
