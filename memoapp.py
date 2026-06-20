@@ -336,6 +336,10 @@ DEFAULT_STATE = {
     "clear_person_result": None,
     "lemon_scan_entries": None,
     "lemon_clear_results": None,
+    # 已登入的 requests.Session 物件，登入一次後重複使用，
+    # 之後每個功能執行時優先重用這個 session，不存在才會去登入。
+    "auth_session": None,
+    "auth_env": "",
 }
 
 for k, v in DEFAULT_STATE.items():
@@ -467,6 +471,23 @@ def reset_mode_state_if_changed(current_mode):
         st.session_state.sheet_summary = None
         clear_pick_states()
         st.session_state.last_mode = current_mode
+
+
+def get_session(ui_logger=None):
+    """
+    取得目前可用的已登入 session：
+    - 如果之前已經登入過（st.session_state.auth_session 存在），直接重用，不會再登入一次。
+    - 沒有的話才呼叫 memo.login() 登入一次，並把結果存起來給之後的功能繼續共用。
+    這樣「找空檔」「確認勾選」這類前後兩個步驟才會是同一個 session，
+    不會因為各自重新登入產生兩個互不相干的 session 導致 CSRF token 對不上（419）。
+    """
+    if st.session_state.auth_session is not None:
+        return st.session_state.auth_session
+
+    session = memo.login(ui_logger=ui_logger)
+    st.session_state.auth_session = session
+    st.session_state.is_logged_in = True
+    return session
 
 
 def render_preview_blocks(rows):
@@ -625,12 +646,16 @@ with st.expander(
         login_clicked = st.button("🔐 Login", use_container_width=True)
 
     with col_unlock:
-        unlock_clicked = st.button("解除鎖定", use_container_width=True)
+        unlock_clicked = st.button("解除鎖定 / 重新登入", use_container_width=True)
 
     if unlock_clicked:
         st.session_state.is_running = False
         st.session_state.logs = []
-        st.success("已解除鎖定")
+        # 「重新登入」：把存住的 session 清掉，下次任何功能執行時會自動重新登入一次。
+        st.session_state.auth_session = None
+        st.session_state.is_logged_in = False
+        st.success("已解除鎖定，下次執行任何功能時會自動重新登入。")
+        st.rerun()
 
     if login_clicked:
         try:
@@ -645,8 +670,12 @@ with st.expander(
                 memo.set_runtime_credentials(email, password)
 
                 with st.spinner("登入中，請稍候…"):
-                    memo.login(ui_logger=ui_log)
+                    session = memo.login(ui_logger=ui_log)
 
+                # 把登入成功拿到的 session 存起來，之後所有功能都重用這個 session，
+                # 不會再各自重新登入。
+                st.session_state.auth_session = session
+                st.session_state.auth_env = env_option
                 st.session_state.is_logged_in = True
                 st.session_state.login_identity = email
                 ui_log("✅ Login 成功")
@@ -655,11 +684,23 @@ with st.expander(
 
         except Exception as e:
             st.session_state.is_logged_in = False
+            st.session_state.auth_session = None
             st.session_state.login_identity = ""
             ui_log(f"❌ Login 失敗：{e}")
             st.error(f"登入失敗：{e}")
         finally:
             st.session_state.is_running = False
+
+    # 切換 prod/dev 環境時，舊的 session 是綁在舊環境的網域上，不能繼續用，
+    # 偵測到環境跟上次登入時不一樣就自動失效，逼下一次執行時重新登入。
+    if (
+        st.session_state.is_logged_in
+        and st.session_state.auth_env
+        and st.session_state.auth_env != env_option
+    ):
+        st.session_state.auth_session = None
+        st.session_state.is_logged_in = False
+        st.warning("環境已切換，請重新登入。")
 
 if not st.session_state.is_logged_in:
     st.markdown(
@@ -883,13 +924,16 @@ def render_memo_section():
             ui_log("===== 開始查詢 =====")
 
             with st.spinner("查詢中，請稍候…"):
+                session = get_session(ui_logger=ui_log)
+
                 if mode == "By 電話":
                     if not phone_text.strip():
                         raise ValueError("請輸入至少一支電話")
 
                     preview_rows = memo.preview_by_phone_multi(
                         phone_text=phone_text.strip(),
-                        ui_logger=ui_log
+                        ui_logger=ui_log,
+                        session=session,
                     )
 
                 else:
@@ -902,6 +946,7 @@ def render_memo_section():
                         date_end=end_text,
                         purchase_status_name=purchase_status_name,
                         ui_logger=ui_log,
+                        session=session,
                     )
 
             st.session_state.preview_rows = preview_rows or []
@@ -928,16 +973,20 @@ def render_memo_section():
                 ui_log("===== 開始執行 =====")
 
                 with st.spinner("執行中，請稍候…"):
+                    session = get_session(ui_logger=ui_log)
+
                     if sheet_run_mode == "指定列號":
                         result = memo.main(
                             row_spec=row_spec,
                             force=force,
-                            ui_logger=ui_log
+                            ui_logger=ui_log,
+                            session=session,
                         )
                     else:
                         result = memo.main_first_n_pending(
                             limit=int(sheet_limit),
-                            ui_logger=ui_log
+                            ui_logger=ui_log,
+                            session=session,
                         )
 
             else:
@@ -959,9 +1008,11 @@ def render_memo_section():
                 ui_log(f"勾選筆數：{len(current_selected_ids)}")
 
                 with st.spinner("執行中，請稍候…"):
+                    session = get_session(ui_logger=ui_log)
                     result = memo.main_by_selected_order_ids(
                         order_ids=current_selected_ids,
-                        ui_logger=ui_log
+                        ui_logger=ui_log,
+                        session=session,
                     )
 
             ui_log("===== 執行完成 =====")
@@ -1043,7 +1094,8 @@ def render_shift_import_section():
             st.session_state.shift_import_rows = rows
 
             with st.spinner("Dry Run 中，請稍候…"):
-                result = shift.process_import_file(rows, dry_run=True, ui_logger=shift_ui_log)
+                session = get_session(ui_logger=shift_ui_log)
+                result = shift.process_import_file(rows, dry_run=True, ui_logger=shift_ui_log, session=session)
 
             st.session_state.shift_dry_run_result = result
             shift_ui_log("===== Dry Run 完成 =====")
@@ -1085,7 +1137,8 @@ def render_shift_import_section():
 
             rows = st.session_state.shift_import_rows
             with st.spinner("儲存中，請稍候…"):
-                result = shift.process_import_file(rows, dry_run=False, ui_logger=ui_log)
+                session = get_session(ui_logger=ui_log)
+                result = shift.process_import_file(rows, dry_run=False, ui_logger=ui_log, session=session)
 
             ui_log("===== 儲存完成 =====")
             st.success(f"✅ 完成，共儲存 {result.get('saved', 0)} 個人/月份")
@@ -1154,8 +1207,8 @@ def render_lemon_ren_section():
 
             date_str = target_date.strftime("%Y-%m-%d")
 
-            with st.spinner("登入並查詢中，請稍候…"):
-                session = memo.login(ui_logger=lemon_ui_log)
+            with st.spinner("查詢中，請稍候…"):
+                session = get_session(ui_logger=lemon_ui_log)
                 candidate = shift.find_available_lemon_ren(
                     session=session,
                     date_val=date_str,
@@ -1202,7 +1255,7 @@ def render_lemon_ren_section():
                 try:
                     ui_log(f"===== 確認勾選 {candidate['name']} =====")
                     with st.spinner("儲存中，請稍候…"):
-                        session = memo.login(ui_logger=ui_log)
+                        session = get_session(ui_logger=ui_log)
                         shift.confirm_lemon_ren_assignment(session, candidate, log=ui_log)
 
                     st.success(f"✅ 已將「{candidate['name']}」勾選並儲存")
@@ -1303,6 +1356,7 @@ def render_atm_section():
                 raise ValueError("請至少勾選一項要執行的動作")
 
             with st.spinner("執行中，請稍候…"):
+                session = get_session(ui_logger=atm_ui_log)
                 result = atm.process_atm_rows(
                     region=region,
                     row_spec=row_spec,
@@ -1310,6 +1364,7 @@ def render_atm_section():
                     do_issue_invoice=do_issue_invoice,
                     do_send_mail=do_send_mail,
                     ui_logger=atm_ui_log,
+                    session=session,
                 )
 
             atm_ui_log("===== 執行完成 =====")
@@ -1430,7 +1485,7 @@ def render_clear_shift_section():
 
                 results = []
                 with st.spinner("執行中，請稍候…"):
-                    session = memo.login(ui_logger=clear_ui_log)
+                    session = get_session(ui_logger=clear_ui_log)
                     for n in target_names:
                         clear_ui_log(f"\n----- 清空「{n}」-----")
                         result = shift.clear_person_shift_range(
@@ -1493,7 +1548,7 @@ def render_clear_shift_section():
                 clear_ui_log("===== 開始掃描未配班清單中的檸檬人 =====")
 
                 with st.spinner("掃描中，請稍候…"):
-                    session = memo.login(ui_logger=clear_ui_log)
+                    session = get_session(ui_logger=clear_ui_log)
                     entries = shift.find_unassigned_lemon_bookings(
                         session=session,
                         query_date=scan_date.strftime("%Y-%m-%d"),
@@ -1546,7 +1601,7 @@ def render_clear_shift_section():
                     try:
                         clear_ui_log("===== 開始清空候補檸檬人佔用的時段 =====")
                         with st.spinner("清空中，請稍候…"):
-                            session = memo.login(ui_logger=clear_ui_log)
+                            session = get_session(ui_logger=clear_ui_log)
                             results = shift.clear_unassigned_lemon_bookings(
                                 session=session,
                                 entries=entries,
