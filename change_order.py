@@ -383,12 +383,24 @@ def append_rows_to_sheet(region: str, rows: list, ui_logger=None):
             ui_logger(msg)
 
     ws = get_worksheet(region)
-    existing = ws.get_all_values()
-    start_row = len(existing) + 1
+
+    # 不能用 get_all_values() 的列數判斷起始列：
+    # 工作表很多空白列掛了資料驗證下拉選單，即使沒選值，
+    # Google Sheets 仍可能把那些列算進「有內容」，導致抓到的列數是整個格線上限（例如 922），
+    # 而不是實際資料的最後一列。改成只看 B 欄（狀態）實際有值的最後一列。
+    b_values = ws.col_values(2)  # B 欄
+    last_data_row = len(b_values)
+    while last_data_row > 0 and not b_values[last_data_row - 1].strip():
+        last_data_row -= 1
+    start_row = last_data_row + 1
 
     col_letters = sorted(set(
         k for row in rows for k in row.keys() if not k.startswith("_")
     ))
+
+    needed_rows = start_row + len(rows) - 1
+    if needed_rows > ws.row_count:
+        ws.add_rows(needed_rows - ws.row_count)
 
     written = 0
     errors = []
