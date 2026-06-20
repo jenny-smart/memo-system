@@ -627,7 +627,7 @@ st.markdown("""
 # 不強制先按 Login——只要帳密有填，下面任何功能執行時會自動登入。
 # ============================================================
 
-step("1", "登入")
+step("1", "登入與環境設定")
 
 login_expanded = not st.session_state.is_logged_in
 
@@ -646,23 +646,14 @@ with st.expander(
     with col_env:
         env_option = st.selectbox("環境", ["prod", "dev"], index=0, key="login_env")
 
-    # 不論有沒有按 Login，只要帳密欄位有值就先同步給 memo 模組，
-    # 這樣等一下任何功能按鈕觸發 get_session() 時，能直接拿這組帳密自動登入。
+    # 不論有沒有手動操作，只要帳密欄位有值就先同步給 memo 模組，
+    # 這樣等一下任何功能按鈕觸發 get_session() 時，能直接拿這組帳密自動登入，
+    # 不需要額外的「Login」按鈕。
     memo.set_env(env_option)
     memo.set_runtime_credentials(email, password)
     st.session_state.credentials_ready = bool(email.strip()) and bool(password.strip())
 
-    col_login, col_unlock = st.columns(2)
-
-    with col_login:
-        login_clicked = st.button(
-            "🔐 立即登入測試",
-            use_container_width=True,
-            help="不是必要步驟，純粹方便你先確認帳密正確；不按這顆，等一下執行任何功能時也會自動登入。",
-        )
-
-    with col_unlock:
-        unlock_clicked = st.button("解除鎖定 / 重新登入", use_container_width=True)
+    unlock_clicked = st.button("解除鎖定 / 重新登入", use_container_width=True)
 
     if unlock_clicked:
         st.session_state.is_running = False
@@ -672,38 +663,6 @@ with st.expander(
         st.session_state.is_logged_in = False
         st.success("已解除鎖定，下次執行任何功能時會自動重新登入。")
         st.rerun()
-
-    if login_clicked:
-        try:
-            reset_before_action(clear_preview=True, clear_selection=True)
-
-            if not email or not password:
-                st.error("請先輸入 Email / Password")
-            else:
-                st.session_state.is_running = True
-                ui_log("===== 開始登入 =====")
-
-                with st.spinner("登入中，請稍候…"):
-                    session = memo.login(ui_logger=ui_log)
-
-                # 把登入成功拿到的 session 存起來，之後所有功能都重用這個 session，
-                # 不會再各自重新登入。
-                st.session_state.auth_session = session
-                st.session_state.auth_env = env_option
-                st.session_state.is_logged_in = True
-                st.session_state.login_identity = email
-                ui_log("✅ Login 成功")
-                st.success("登入成功，請往下選擇功能。")
-                st.rerun()
-
-        except Exception as e:
-            st.session_state.is_logged_in = False
-            st.session_state.auth_session = None
-            st.session_state.login_identity = ""
-            ui_log(f"❌ Login 失敗：{e}")
-            st.error(f"登入失敗：{e}")
-        finally:
-            st.session_state.is_running = False
 
     # 切換 prod/dev 環境時，舊的 session 是綁在舊環境的網域上，不能繼續用，
     # 偵測到環境跟上次登入時不一樣就自動失效，逼下一次執行時重新登入。
