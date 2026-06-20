@@ -1778,11 +1778,13 @@ def render_change_order_section():
 # --------------------------------------------------------
 
 SCENARIO_OPTIONS = [
-    "不退服務（收異動費）",
-    "退服務（收異動費＋退餘額）",
     "僅開車馬費發票",
+    "異動（待收款）",
+    "異動（待退款）",
     "加時（待收款）",
     "減時（待退款）",
+    "客訴（待退款）",
+    "物損（待退款）",
 ]
 
 
@@ -1803,6 +1805,8 @@ def render_change_order_stage_a():
         scenario = st.radio("情境", SCENARIO_OPTIONS, key="co_scenario")
 
         is_time_change = scenario in ("加時（待收款）", "減時（待退款）")
+        is_manual_refund = scenario in ("客訴（待退款）", "物損（待退款）")
+
         change_hours = None
         change_person = None
         if is_time_change:
@@ -1811,6 +1815,12 @@ def render_change_order_stage_a():
             )
             change_person = st.number_input(
                 "異動人數", min_value=1, step=1, value=1, key="co_time_person"
+            )
+
+        manual_amount = None
+        if is_manual_refund:
+            manual_amount = st.number_input(
+                "退款金額", min_value=0, step=50, value=0, key="co_manual_amount"
             )
 
     with c2:
@@ -1887,11 +1897,29 @@ def render_change_order_stage_a():
                         calc_rows.append(row)
                         continue
 
+                    if scenario == "客訴（待退款）":
+                        row = change_order.build_manual_refund_row(
+                            order, manual_amount, change_order.TYPE_COMPLAINT_REFUND,
+                            service_note, customer_type=customer_type,
+                            service_date=service_date_input
+                        )
+                        calc_rows.append(row)
+                        continue
+
+                    if scenario == "物損（待退款）":
+                        row = change_order.build_manual_refund_row(
+                            order, manual_amount, change_order.TYPE_DAMAGE_REFUND,
+                            service_note, customer_type=customer_type,
+                            service_date=service_date_input
+                        )
+                        calc_rows.append(row)
+                        continue
+
                     fee_info = change_order.calc_change_fee(
                         order, service_date=service_date_input
                     )
 
-                    if scenario.startswith("不退服務"):
+                    if scenario == "異動（待收款）":
                         row = change_order.build_charge_row(
                             order, fee_info, service_note, customer_type=customer_type,
                             service_date=service_date_input
