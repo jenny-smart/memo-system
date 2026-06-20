@@ -280,6 +280,32 @@ def fetch_order_basic(keyword: str, session: requests.Session, ui_logger=None, b
 # 階段 A-2：試算金額
 # ============================================================
 
+def _col_letter_to_index(letter: str) -> int:
+    """ 'A' -> 0, 'Z' -> 25, 'AA' -> 26, 'AB' -> 27, 'AC' -> 28 ... 支援多字母欄位 """
+    result = 0
+    for ch in letter.strip().upper():
+        result = result * 26 + (ord(ch) - ord("A") + 1)
+    return result - 1
+
+
+def _format_service_datetime(service_date: date, period_text: str) -> str:
+    """ 組成 I 欄要寫入的文字：服務日期＋星期＋時段，例如 2026-06-24 (三) 09:00 - 12:00 """
+    if not service_date:
+        return period_text or ""
+    weekday_map = ["一", "二", "三", "四", "五", "六", "日"]
+    weekday = weekday_map[service_date.weekday()]
+    date_part = f"{service_date.strftime('%Y-%m-%d')} ({weekday})"
+    return f"{date_part} {period_text}".strip() if period_text else date_part
+
+
+def _workday_note(fee_info: dict) -> str:
+    """ 組成『服務前 X 個工作天異動』這類的說明文字，放在 J 欄最前面 """
+    workdays = fee_info.get("workdays", 0)
+    if workdays <= 0:
+        return "服務當天/已過服務時間異動"
+    return f"服務前{workdays}個工作天異動"
+
+
 def calc_fare(order: dict) -> int:
     """車馬費 = 專員人數 × $100"""
     return order.get("cleaner_count", 0) * 100
@@ -295,17 +321,25 @@ def calc_change_fee(order: dict, service_date: date, change_person: int = None,
     workdays = _count_workdays_before(service_date, today=today)
     tier = "near" if workdays <= 1 else "far"   # near=服務前1工作天/當天, far=服務前2-3工作天
 
+    workday_note = _workday_note({"workdays": workdays})
+
     if order.get("payway") == "儲值金":
         hours = order.get("service_hours", 0)
         person = change_person or order.get("cleaner_count", 0)
         unit = (hours * person) / 2
         rate = 300 if tier == "near" else 200
         change_fee = round(unit * rate)
-        calc_note = f"儲值金客：{hours}小時×{person}人÷2={unit}單位 × ${rate} = ${change_fee}"
+        calc_note = (
+            f"{workday_note}，儲值金客：{hours}小時×{person}人÷2={unit}單位 "
+            f"× ${rate}/單位 = ${change_fee}"
+        )
     else:
         rate = 0.5 if tier == "near" else 0.3
         change_fee = round(order.get("total", 0) * rate)
-        calc_note = f"一般客：總金額{order.get('total', 0)} × {int(rate*100)}% = ${change_fee}"
+        calc_note = (
+            f"{workday_note}，一般客：總金額{order.get('total', 0)} × "
+            f"{int(rate*100)}% = ${change_fee}"
+        )
 
     return {
         "workdays": workdays,
@@ -324,26 +358,32 @@ def calc_refund_amount(order: dict, change_fee: int) -> int:
 # 階段 A-3：組合一筆要寫入 Sheet 的列（三種情境）
 # ============================================================
 
-def build_fare_row(order: dict, today: date = None) -> dict:
+def build_fare_row(order: dict, service_date: date = None, today: date = None) -> dict:
     """車馬費發票"""
     fare = calc_fare(order)
+    i_value = _format_service_datetime(service_date, order.get("period_text", ""))
     return {
         "A": "清潔", "B": "待處理發票", "C": TYPE_FARE,
         "E": (today or date.today()).strftime("%Y/%m/%d"),
         "F": "", "G": order["order_no"], "H": order["customer_name"],
-        "I": order.get("period_text", ""), "J": f"車馬費 ${fare}",
+        "I": i_value, "J": f"車馬費 ${fare}",
         "_calc_amount": fare,
     }
 
 
 def build_charge_row(order: dict, change_fee_info: dict, service_note: str,
-                      customer_type: str = "一般", today: date = None) -> dict:
+                      customer_type: str = "一般", service_date: date = None,
+                      today: date = None) -> dict:
     """不退服務 → 異動服務收款（待收款）"""
+    i_value = _format_service_datetime(service_date, order.get("period_text", ""))
+    workday_note = _workday_note(change_fee_info)
+    j_value = f"{workday_note}，{service_note}，收異動費 ${change_fee_info['change_fee']}" \
+        if service_note else f"{workday_note}，收異動費 ${change_fee_info['change_fee']}"
     return {
         "A": "清潔", "B": STATUS_PENDING_CHARGE, "C": TYPE_CHARGE,
         "E": (today or date.today()).strftime("%Y/%m/%d"),
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
-        "I": order.get("period_text", ""), "J": service_note,
+        "I": i_value, "J": j_value,
         "M": "", "N": change_fee_info["change_fee"], "O": "",
         "_calc_amount": change_fee_info["change_fee"],
         "_calc_note": change_fee_info["calc_note"],
@@ -351,21 +391,102 @@ def build_charge_row(order: dict, change_fee_info: dict, service_note: str,
 
 
 def build_refund_row(order: dict, change_fee_info: dict, service_note: str,
-                      customer_type: str = "一般", today: date = None) -> dict:
+                      customer_type: str = "一般", service_date: date = None,
+                      today: date = None) -> dict:
     """退服務 → 異動服務退款（待退款），餘額退還"""
     refund_amount = calc_refund_amount(order, change_fee_info["change_fee"])
+    i_value = _format_service_datetime(service_date, order.get("period_text", ""))
+    workday_note = _workday_note(change_fee_info)
+    j_value = (
+        f"{workday_note}，{service_note}，收異動費 ${change_fee_info['change_fee']} / "
+        f"退費 ${refund_amount}"
+        if service_note else
+        f"{workday_note}，收異動費 ${change_fee_info['change_fee']} / 退費 ${refund_amount}"
+    )
     return {
         "A": "清潔", "B": STATUS_PENDING_REFUND, "C": TYPE_REFUND,
         "E": (today or date.today()).strftime("%Y/%m/%d"),
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
-        "I": order.get("period_text", ""),
-        "J": f"{service_note}，收異動費 ${change_fee_info['change_fee']} / 退費 ${refund_amount}",
+        "I": i_value,
+        "J": j_value,
         "R": "信用卡" if order.get("payway") != "儲值金" else "儲值金",
         "S": refund_amount,
         "X": order.get("invoice_no", ""),
         "Y": "三聯" if order.get("carrier_type") == "三聯式" else "二聯",
         "_calc_amount": refund_amount,
         "_calc_note": change_fee_info["calc_note"],
+    }
+
+
+# ============================================================
+# 階段 A-3b：加時 / 減時（按人時計價，平日／假日不同費率）
+# ============================================================
+
+TIME_RATE_WEEKDAY = 600  # 平日每人時
+TIME_RATE_WEEKEND = 700  # 週末（六、日）每人時
+
+
+def calc_time_change_fee(service_date: date, hours: float, person: int) -> dict:
+    """
+    加時／減時金額試算：平日每人時 $600，週末（六、日）每人時 $700。
+    回傳 dict: {amount, rate, is_weekend, calc_note}
+    """
+    is_weekend = service_date.weekday() >= 5 if service_date else False
+    rate = TIME_RATE_WEEKEND if is_weekend else TIME_RATE_WEEKDAY
+    amount = round((hours or 0) * (person or 0) * rate)
+    day_label = "週末" if is_weekend else "平日"
+    calc_note = f"{day_label}：{hours}小時 × {person}人 × ${rate}/人時 = ${amount}"
+    return {
+        "amount": amount,
+        "rate": rate,
+        "is_weekend": is_weekend,
+        "calc_note": calc_note,
+    }
+
+
+def build_addtime_row(order: dict, time_fee_info: dict, service_note: str,
+                       customer_type: str = "一般", service_date: date = None,
+                       today: date = None) -> dict:
+    """加時 → 異動服務收款（待收款），其餘欄位結構同異動待收款"""
+    i_value = _format_service_datetime(service_date, order.get("period_text", ""))
+    j_value = (
+        f"加時，{time_fee_info['calc_note']}，{service_note}，收異動費 ${time_fee_info['amount']}"
+        if service_note else
+        f"加時，{time_fee_info['calc_note']}，收異動費 ${time_fee_info['amount']}"
+    )
+    return {
+        "A": "清潔", "B": STATUS_PENDING_CHARGE, "C": TYPE_CHARGE,
+        "E": (today or date.today()).strftime("%Y/%m/%d"),
+        "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
+        "I": i_value, "J": j_value,
+        "M": "", "N": time_fee_info["amount"], "O": "",
+        "_calc_amount": time_fee_info["amount"],
+        "_calc_note": time_fee_info["calc_note"],
+    }
+
+
+def build_reducetime_row(order: dict, time_fee_info: dict, service_note: str,
+                          customer_type: str = "一般", service_date: date = None,
+                          today: date = None) -> dict:
+    """減時 → 異動服務退款（待退款），其餘欄位結構同異動待退款"""
+    i_value = _format_service_datetime(service_date, order.get("period_text", ""))
+    j_value = (
+        f"減時，{time_fee_info['calc_note']}，{service_note}，退費 ${time_fee_info['amount']}"
+        if service_note else
+        f"減時，{time_fee_info['calc_note']}，退費 ${time_fee_info['amount']}"
+    )
+    return {
+        "A": "清潔", "B": STATUS_PENDING_REFUND, "C": TYPE_REFUND,
+        "E": (today or date.today()).strftime("%Y/%m/%d"),
+        "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
+        "I": i_value,
+        "J": j_value,
+        "R": "信用卡" if order.get("payway") != "儲值金" else "儲值金",
+        "S": time_fee_info["amount"],
+        "X": order.get("invoice_no", ""),
+        "Y": "三聯" if order.get("carrier_type") == "三聯式" else "二聯",
+        "_calc_amount": time_fee_info["amount"],
+        "_calc_note": time_fee_info["calc_note"],
     }
 
 
@@ -468,7 +589,7 @@ def build_purchase_edit_payload(item: dict) -> dict:
     raw = item["raw"]
 
     def cell(letter):
-        idx = ord(letter) - ord("A")
+        idx = _col_letter_to_index(letter)
         return raw[idx] if len(raw) > idx else ""
 
     if item["kind"] == "charge":
