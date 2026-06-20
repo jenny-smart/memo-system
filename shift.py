@@ -367,7 +367,21 @@ def submit_shift_payload(session: requests.Session, cleaner_id: str, token: str,
             "User-Agent": "Mozilla/5.0",
         },
     )
-    resp.raise_for_status()
+
+    try:
+        resp.raise_for_status()
+    except requests.HTTPError as e:
+        # 把後端實際回應內容（通常前幾百字就看得出是 CSRF 過期、權限不足、還是別的錯誤）
+        # 一併附在例外訊息裡，方便診斷，而不是只看到「419 unknown status」這種空泛訊息。
+        snippet = (resp.text or "")[:500].replace("\n", " ")
+        has_token_cookie = any("token" in c.name.lower() or "session" in c.name.lower() for c in session.cookies)
+        raise requests.HTTPError(
+            f"{e}\n"
+            f"[診斷] 送出的 _token 開頭：{token[:10]}…（長度 {len(token)}）"
+            f"｜session 是否帶有 session/token 相關 cookie：{has_token_cookie}"
+            f"｜回應內容前 500 字：{snippet}"
+        ) from e
+
     return resp
 
 
