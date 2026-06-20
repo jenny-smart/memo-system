@@ -340,6 +340,7 @@ DEFAULT_STATE = {
     # 之後每個功能執行時優先重用這個 session，不存在才會去登入。
     "auth_session": None,
     "auth_env": "",
+    "credentials_ready": False,
 }
 
 for k, v in DEFAULT_STATE.items():
@@ -480,13 +481,19 @@ def get_session(ui_logger=None):
     - 沒有的話才呼叫 memo.login() 登入一次，並把結果存起來給之後的功能繼續共用。
     這樣「找空檔」「確認勾選」這類前後兩個步驟才會是同一個 session，
     不會因為各自重新登入產生兩個互不相干的 session 導致 CSRF token 對不上（419）。
+    不需要先手動按 Login——只要 Step 1 帳密欄位有填，這裡會自動登入一次。
     """
     if st.session_state.auth_session is not None:
         return st.session_state.auth_session
 
+    if not st.session_state.get("credentials_ready"):
+        raise RuntimeError("請先在「登入」區塊輸入帳號密碼")
+
     session = memo.login(ui_logger=ui_logger)
     st.session_state.auth_session = session
     st.session_state.is_logged_in = True
+    st.session_state.login_identity = st.session_state.get("login_email", "")
+    st.session_state.auth_env = st.session_state.get("login_env", "prod")
     return session
 
 
@@ -617,6 +624,7 @@ st.markdown("""
 # ============================================================
 # Step 1：登入與環境設定（所有功能共用同一組登入狀態）
 # 已登入後改成摺疊狀態，畫面比較乾淨；要換帳號再展開即可。
+# 不強制先按 Login——只要帳密有填，下面任何功能執行時會自動登入。
 # ============================================================
 
 step("1", "登入")
@@ -630,20 +638,28 @@ with st.expander(
     col_e, col_p, col_env = st.columns([2.4, 2.4, 1.2])
 
     with col_e:
-        email = st.text_input("後台帳號", placeholder="jenny@lemonclean.com.tw")
+        email = st.text_input("後台帳號", placeholder="jenny@lemonclean.com.tw", key="login_email")
 
     with col_p:
-        password = st.text_input("後台密碼", type="password")
+        password = st.text_input("後台密碼", type="password", key="login_password")
 
     with col_env:
-        env_option = st.selectbox("環境", ["prod", "dev"], index=0)
+        env_option = st.selectbox("環境", ["prod", "dev"], index=0, key="login_env")
 
+    # 不論有沒有按 Login，只要帳密欄位有值就先同步給 memo 模組，
+    # 這樣等一下任何功能按鈕觸發 get_session() 時，能直接拿這組帳密自動登入。
     memo.set_env(env_option)
+    memo.set_runtime_credentials(email, password)
+    st.session_state.credentials_ready = bool(email.strip()) and bool(password.strip())
 
     col_login, col_unlock = st.columns(2)
 
     with col_login:
-        login_clicked = st.button("🔐 Login", use_container_width=True)
+        login_clicked = st.button(
+            "🔐 立即登入測試",
+            use_container_width=True,
+            help="不是必要步驟，純粹方便你先確認帳密正確；不按這顆，等一下執行任何功能時也會自動登入。",
+        )
 
     with col_unlock:
         unlock_clicked = st.button("解除鎖定 / 重新登入", use_container_width=True)
@@ -666,8 +682,6 @@ with st.expander(
             else:
                 st.session_state.is_running = True
                 ui_log("===== 開始登入 =====")
-                memo.set_env(env_option)
-                memo.set_runtime_credentials(email, password)
 
                 with st.spinner("登入中，請稍候…"):
                     session = memo.login(ui_logger=ui_log)
@@ -702,9 +716,14 @@ with st.expander(
         st.session_state.is_logged_in = False
         st.warning("環境已切換，請重新登入。")
 
-if not st.session_state.is_logged_in:
+if not st.session_state.credentials_ready:
     st.markdown(
-        '<div class="info-strip">⚠️ 尚未登入，請先在上方輸入帳密並點擊 Login，才能使用下方功能。</div>',
+        '<div class="info-strip">⚠️ 請先在上方輸入帳號密碼，才能使用下方功能（執行功能時會自動登入，不用先按 Login）。</div>',
+        unsafe_allow_html=True
+    )
+elif not st.session_state.is_logged_in:
+    st.markdown(
+        '<div class="info-strip">ℹ️ 帳密已就緒，第一次執行下方任何功能時會自動登入一次。</div>',
         unsafe_allow_html=True
     )
 
@@ -788,7 +807,7 @@ def render_memo_section():
             execute_btn = st.button(
                 "🚀 執行",
                 use_container_width=True,
-                disabled=not st.session_state.is_logged_in
+                disabled=not st.session_state.credentials_ready
             )
 
         else:
@@ -798,7 +817,7 @@ def render_memo_section():
                 sheet_summary_btn = st.button(
                     "🔍 查詢目前筆數",
                     use_container_width=True,
-                    disabled=not st.session_state.is_logged_in
+                    disabled=not st.session_state.credentials_ready
                 )
 
             with c2:
@@ -818,7 +837,7 @@ def render_memo_section():
             execute_btn = st.button(
                 "🚀 執行前 N 筆未處理資料",
                 use_container_width=True,
-                disabled=not st.session_state.is_logged_in
+                disabled=not st.session_state.credentials_ready
             )
 
     elif mode == "By 電話":
@@ -835,14 +854,14 @@ def render_memo_section():
             search_btn = st.button(
                 "🔍 查詢列表",
                 use_container_width=True,
-                disabled=not st.session_state.is_logged_in
+                disabled=not st.session_state.credentials_ready
             )
 
         with c2:
             execute_btn = st.button(
                 "🚀 執行勾選項目",
                 use_container_width=True,
-                disabled=not st.session_state.is_logged_in
+                disabled=not st.session_state.credentials_ready
             )
 
     else:
@@ -874,14 +893,14 @@ def render_memo_section():
             search_btn = st.button(
                 "🔍 查詢列表",
                 use_container_width=True,
-                disabled=not st.session_state.is_logged_in
+                disabled=not st.session_state.credentials_ready
             )
 
         with c6:
             execute_btn = st.button(
                 "🚀 執行勾選項目",
                 use_container_width=True,
-                disabled=not st.session_state.is_logged_in
+                disabled=not st.session_state.credentials_ready
             )
 
     global log_box, result_container
@@ -1056,14 +1075,14 @@ def render_shift_import_section():
         dry_run_btn = st.button(
             "🔍 Dry Run 預覽（不會寫入）",
             use_container_width=True,
-            disabled=not (st.session_state.is_logged_in and uploaded_file is not None),
+            disabled=not (st.session_state.credentials_ready and uploaded_file is not None),
         )
     with c2:
         execute_btn = st.button(
             "🚀 正式儲存",
             use_container_width=True,
             disabled=not (
-                st.session_state.is_logged_in
+                st.session_state.credentials_ready
                 and st.session_state.shift_dry_run_result is not None
             ),
         )
@@ -1181,7 +1200,7 @@ def render_lemon_ren_section():
     find_btn = st.button(
         "🔍 尋找空檔檸檬人",
         use_container_width=True,
-        disabled=not st.session_state.is_logged_in,
+        disabled=not st.session_state.credentials_ready,
     )
 
     with st.expander("執行 LOG", expanded=True):
@@ -1323,7 +1342,7 @@ def render_atm_section():
     execute_btn = st.button(
         "🚀 執行",
         use_container_width=True,
-        disabled=not (st.session_state.is_logged_in and bool(row_spec.strip())),
+        disabled=not (st.session_state.credentials_ready and bool(row_spec.strip())),
     )
 
     with st.expander("執行 LOG", expanded=True):
@@ -1432,7 +1451,7 @@ def render_clear_shift_section():
         execute_btn = st.button(
             "🚀 執行清空",
             use_container_width=True,
-            disabled=not (st.session_state.is_logged_in and bool(target_names)),
+            disabled=not (st.session_state.credentials_ready and bool(target_names)),
         )
 
         with st.expander("執行 LOG", expanded=True):
@@ -1522,7 +1541,7 @@ def render_clear_shift_section():
         scan_btn = st.button(
             "🔍 掃描未配班清單",
             use_container_width=True,
-            disabled=not st.session_state.is_logged_in,
+            disabled=not st.session_state.credentials_ready,
         )
 
         with st.expander("執行 LOG", expanded=True):
