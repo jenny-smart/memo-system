@@ -207,9 +207,75 @@ def _count_workdays_before(service_date: date, today: date = None) -> int:
 # 階段 A-1：查訂單基本資料
 # ============================================================
 
+def _extract_service_date(date_cell_text: str):
+    """ 從服務日期欄文字中擷取日期，支援 2026-06-24 或 2026/06/24 格式 """
+    m = re.search(r"(\d{4})[-/](\d{1,2})[-/](\d{1,2})", date_cell_text or "")
+    if not m:
+        return None
+    y, mo, d = map(int, m.groups())
+    try:
+        return date(y, mo, d)
+    except ValueError:
+        return None
+
+
+def _parse_order_row(row) -> dict:
+    """ 解析 /purchase 查詢結果頁裡的單一筆 <tr>，回傳訂單基本資料 dict（找不到訂單編號則回傳 None） """
+    checkbox = row.select_one('input[name="purchase_id[]"]')
+    purchase_id = checkbox["value"] if checkbox else None
+    order_no_label = row.select_one("td label")
+    order_no = order_no_label.get_text(strip=True).split()[-1] if order_no_label else ""
+    if not order_no:
+        return None
+
+    name_tag = row.select_one('a[href*="/member?keyword"]')
+    customer_name = name_tag.get_text(strip=True) if name_tag else ""
+
+    tds = row.select("td")
+    date_cell = tds[2] if len(tds) > 2 else None
+    date_cell_text = date_cell.get_text("\n", strip=True) if date_cell else ""
+
+    period_match = re.search(r"\d{2}:\d{2}\s*-\s*\d{2}:\d{2}", date_cell_text)
+    period_text = period_match.group(0) if period_match else ""
+
+    cleaner_count = len(date_cell.select('a[href*="schedule/edit"]')) if date_cell else 0
+    service_date_obj = _extract_service_date(date_cell_text)
+
+    pay_cell = tds[3] if len(tds) > 3 else None
+    pay_cell_text = pay_cell.get_text("\n", strip=True) if pay_cell else ""
+
+    total_match = re.search(r"總金額[：:]\s*([\d,]+)", pay_cell_text)
+    total = int(total_match.group(1).replace(",", "")) if total_match else 0
+
+    payway = "儲值金" if "儲值金" in pay_cell_text else "非儲值金"
+
+    invoice_match = re.search(r"發票[：:]\s*([A-Z0-9]+)", pay_cell_text)
+    invoice_no = invoice_match.group(1) if invoice_match else ""
+
+    carrier_type = "三聯式" if "統編" in pay_cell_text or "三聯" in pay_cell_text else "二聯式"
+    is_paid = ("已付款" in pay_cell_text) and ("未付款" not in pay_cell_text)
+
+    return {
+        "purchase_id": purchase_id,
+        "order_no": order_no,
+        "customer_name": customer_name,
+        "period_text": period_text,
+        "service_hours": _parse_period_hours(period_text),
+        "cleaner_count": cleaner_count,
+        "total": total,
+        "payway": payway,           # 儲值金 / 非儲值金
+        "invoice_no": invoice_no,
+        "carrier_type": carrier_type,  # 二聯式 / 三聯式
+        "raw_date_cell": date_cell_text,
+        "service_date": service_date_obj,
+        "is_paid": is_paid,
+        "pay_status_text": pay_cell_text,
+    }
+
+
 def fetch_order_basic(keyword: str, session: requests.Session, ui_logger=None, by="orderNo"):
     """
-    依電話或訂單編號查詢 /purchase，回傳該訂單基本資料 dict。
+    依電話或訂單編號查詢 /purchase，回傳該訂單基本資料 dict（取第一筆符合的列）。
     by: "orderNo" 或 "phone"
     """
     def log(msg):
@@ -228,53 +294,53 @@ def fetch_order_basic(keyword: str, session: requests.Session, ui_logger=None, b
         log("⚠️ 查無資料")
         return None
 
-    # 訂單編號 + purchase_id
-    checkbox = row.select_one('input[name="purchase_id[]"]')
-    purchase_id = checkbox["value"] if checkbox else None
-    order_no_label = row.select_one("td label")
-    order_no = order_no_label.get_text(strip=True).split()[-1] if order_no_label else keyword
+    result = _parse_order_row(row)
+    if not result:
+        log("⚠️ 查無資料")
+        return None
 
-    # 客戶姓名
-    name_tag = row.select_one('a[href*="/member?keyword"]')
-    customer_name = name_tag.get_text(strip=True) if name_tag else ""
+    log(f"✅ 查到訂單 {result['order_no']}，總金額 {result['total']}，"
+        f"{result['cleaner_count']} 人，{result['period_text']}")
+    return result
 
-    # 服務日期欄（含時段、專員）
-    date_cell = row.select("td")[2] if len(row.select("td")) > 2 else None
-    date_cell_text = date_cell.get_text("\n", strip=True) if date_cell else ""
 
-    period_match = re.search(r"\d{2}:\d{2}\s*-\s*\d{2}:\d{2}", date_cell_text)
-    period_text = period_match.group(0) if period_match else ""
+def fetch_recent_paid_orders_by_phone(phone: str, session: requests.Session, ui_logger=None):
+    """
+    依電話查詢 /purchase，找出「最近一次服務日期」且狀態為「已付款」的訂單。
+    若同一天有多筆（合併訂單），全部一起回傳。
+    回傳 list of dict（內容同 fetch_order_basic 的結果），查無資料則回傳空 list。
+    """
+    def log(msg):
+        if ui_logger:
+            ui_logger(msg)
 
-    cleaner_count = len(date_cell.select('a[href*="schedule/edit"]')) if date_cell else 0
+    log(f"查詢電話：{phone}")
 
-    # 付款資訊欄
-    pay_cell = row.select("td")[3] if len(row.select("td")) > 3 else None
-    pay_cell_text = pay_cell.get_text("\n", strip=True) if pay_cell else ""
+    resp = session.get(f"{BASE_URL}/purchase", params={"phone": phone}, timeout=20)
+    resp.raise_for_status()
+    soup = BeautifulSoup(resp.text, "html.parser")
 
-    total_match = re.search(r"總金額[：:]\s*([\d,]+)", pay_cell_text)
-    total = int(total_match.group(1).replace(",", "")) if total_match else 0
+    rows = soup.select("table tbody tr")
+    if not rows:
+        log("⚠️ 查無資料")
+        return []
 
-    payway = "儲值金" if "儲值金" in pay_cell_text else "非儲值金"
+    parsed = []
+    for row in rows:
+        info = _parse_order_row(row)
+        if info:
+            parsed.append(info)
 
-    invoice_match = re.search(r"發票[：:]\s*([A-Z0-9]+)", pay_cell_text)
-    invoice_no = invoice_match.group(1) if invoice_match else ""
+    paid_with_date = [p for p in parsed if p.get("is_paid") and p.get("service_date")]
+    if not paid_with_date:
+        log("⚠️ 查無「已付款」且有服務日期的訂單")
+        return []
 
-    carrier_type = "三聯式" if "統編" in pay_cell_text or "三聯" in pay_cell_text else "二聯式"
+    latest_date = max(p["service_date"] for p in paid_with_date)
+    result = [p for p in paid_with_date if p["service_date"] == latest_date]
 
-    result = {
-        "purchase_id": purchase_id,
-        "order_no": order_no,
-        "customer_name": customer_name,
-        "period_text": period_text,
-        "service_hours": _parse_period_hours(period_text),
-        "cleaner_count": cleaner_count,
-        "total": total,
-        "payway": payway,           # 儲值金 / 非儲值金
-        "invoice_no": invoice_no,
-        "carrier_type": carrier_type,  # 二聯式 / 三聯式
-        "raw_date_cell": date_cell_text,
-    }
-    log(f"✅ 查到訂單 {order_no}，總金額 {total}，{cleaner_count} 人，{period_text}")
+    log(f"✅ 最近服務日期：{latest_date}，共找到 {len(result)} 筆已付款訂單"
+        + ("（同日多筆，可能為合併訂單）" if len(result) > 1 else ""))
     return result
 
 
