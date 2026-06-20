@@ -1755,7 +1755,7 @@ def render_clear_shift_section():
 
 
 # ============================================================
-# 功能六：清潔異動（車馬費／異動服務收款／異動服務退款）
+# 功能六：清潔異動（車馬費／異動服務收款／異動服務退款／加時／減時）
 # ============================================================
 
 def render_change_order_section():
@@ -1777,12 +1777,22 @@ def render_change_order_section():
 # 階段 A：查詢試算
 # --------------------------------------------------------
 
+SCENARIO_OPTIONS = [
+    "不退服務（收異動費）",
+    "退服務（收異動費＋退餘額）",
+    "僅開車馬費發票",
+    "加時（待收款）",
+    "減時（待退款）",
+]
+
+
 def render_change_order_stage_a():
     step("3", "輸入要查詢試算的訂單")
 
     st.markdown(
         '<div class="info-strip">支援「電話」或「訂單編號」查詢，可一次輸入多筆（逗號或換行分隔）。'
-        '查到資料後會試算車馬費／異動費／應退款，確認沒問題再寫入清潔異動工作表。</div>',
+        '查到資料後會試算車馬費／異動費／應退款／加時／減時金額，確認沒問題再寫入清潔異動工作表。'
+        '加時／減時：平日每人時 $600，週末（六、日）每人時 $700，其餘欄位結構同異動待收款／待退款。</div>',
         unsafe_allow_html=True
     )
 
@@ -1790,10 +1800,19 @@ def render_change_order_stage_a():
     with c1:
         region = st.selectbox("地區", ["台北", "台中"], key="co_region_a")
         query_by = st.radio("查詢方式", ["訂單編號", "電話"], horizontal=True, key="co_query_by")
-        scenario = st.radio(
-            "情境", ["不退服務（收異動費）", "退服務（收異動費＋退餘額）", "僅開車馬費發票"],
-            key="co_scenario"
-        )
+        scenario = st.radio("情境", SCENARIO_OPTIONS, key="co_scenario")
+
+        is_time_change = scenario in ("加時（待收款）", "減時（待退款）")
+        change_hours = None
+        change_person = None
+        if is_time_change:
+            change_hours = st.number_input(
+                "異動時數（小時）", min_value=0.0, step=0.5, value=1.0, key="co_time_hours"
+            )
+            change_person = st.number_input(
+                "異動人數", min_value=1, step=1, value=1, key="co_time_person"
+            )
+
     with c2:
         keywords_text = st.text_area(
             "訂單編號 / 電話清單",
@@ -1801,7 +1820,7 @@ def render_change_order_stage_a():
             key="co_keywords"
         )
         customer_type = st.selectbox("客戶類別", ["一般", "VIP"], key="co_customer_type")
-        service_date_input = st.date_input("服務日期（用於計算工作天數）", value=date.today(), key="co_service_date")
+        service_date_input = st.date_input("服務日期（用於計算工作天數／平日假日）", value=date.today(), key="co_service_date")
         service_note = st.text_input("服務註記（寫入 J 欄）", placeholder="例：客通知停水異動服務", key="co_service_note")
 
     query_btn = st.button(
@@ -1842,7 +1861,29 @@ def render_change_order_stage_a():
                         continue
 
                     if scenario == "僅開車馬費發票":
-                        row = change_order.build_fare_row(order)
+                        row = change_order.build_fare_row(order, service_date=service_date_input)
+                        calc_rows.append(row)
+                        continue
+
+                    if scenario == "加時（待收款）":
+                        time_fee_info = change_order.calc_time_change_fee(
+                            service_date_input, hours=change_hours, person=change_person
+                        )
+                        row = change_order.build_addtime_row(
+                            order, time_fee_info, service_note, customer_type=customer_type,
+                            service_date=service_date_input
+                        )
+                        calc_rows.append(row)
+                        continue
+
+                    if scenario == "減時（待退款）":
+                        time_fee_info = change_order.calc_time_change_fee(
+                            service_date_input, hours=change_hours, person=change_person
+                        )
+                        row = change_order.build_reducetime_row(
+                            order, time_fee_info, service_note, customer_type=customer_type,
+                            service_date=service_date_input
+                        )
                         calc_rows.append(row)
                         continue
 
@@ -1852,11 +1893,13 @@ def render_change_order_stage_a():
 
                     if scenario.startswith("不退服務"):
                         row = change_order.build_charge_row(
-                            order, fee_info, service_note, customer_type=customer_type
+                            order, fee_info, service_note, customer_type=customer_type,
+                            service_date=service_date_input
                         )
                     else:
                         row = change_order.build_refund_row(
-                            order, fee_info, service_note, customer_type=customer_type
+                            order, fee_info, service_note, customer_type=customer_type,
+                            service_date=service_date_input
                         )
                     calc_rows.append(row)
 
