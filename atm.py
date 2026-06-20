@@ -314,3 +314,142 @@ def process_atm_rows(
 
     log("\n===== ATM 對帳處理完成 =====")
     return result
+
+
+# -----------------------------------------------------------------------------
+# /ATM-list：查詢「訂單統計表」勾選 + 待付款 + ATM 付款方式 的訂單清單，
+# 整理成 訂單服務年月｜訂單編號｜客戶名稱｜總金額扣車馬費，貼到 ATM 對帳工作表。
+# -----------------------------------------------------------------------------
+def search_atm_unpaid_orders(session, date_until: str, ui_logger=None) -> List[Dict]:
+    """
+    對應後台「訂單管理」頁面的搜尋條件：
+    訂購日期-迄＝date_until、勾選「訂單統計表」、付款狀態＝待付款、付款方式＝ATM。
+
+    /purchase 頁面底部的 Vue 元件裡有完整的 purchaseList JSON（含 total / fare 等欄位），
+    直接解析這份 JSON 比逐筆爬 HTML 表格穩，沿用 extract_purchase_list_json()。
+
+    回傳 list of dict：
+    [{"year_month": "2026.07", "order_no": "LC00211493", "name": "謝依純", "net_amount": 5600}, ...]
+    （net_amount = total 總金額 - fare 車馬費）
+    """
+    log = make_logger(ui_logger)
+
+    url = f"{memo.BASE_URL}/purchase"
+    params = {
+        "keyword": "",
+        "name": "",
+        "phone": "",
+        "orderNo": "",
+        "date_s": "",
+        "date_e": date_until,
+        "clean_date_s": "",
+        "clean_date_e": "",
+        "paid_at_s": "",
+        "paid_at_e": "",
+        "refundDateS": "",
+        "refundDateE": "",
+        "buy": "",
+        "buy_item": "",
+        "area_id": "",
+        "isCharge": "",
+        "isRefund": "",
+        "payway": "2",            # ATM
+        "purchase_status": "0",   # 待付款
+        "progress_status": "",
+        "invoiceStatus": "",
+        "otherFee": "",
+        "orderBy": "",
+        "p_board": "on",          # 勾選「訂單統計表」
+    }
+
+    log(f"===== 查詢 ATM 待付款名單（訂購日期迄：{date_until}）=====")
+    r = memo.session_get(session, url, params=params)
+    r.raise_for_status()
+
+    data = extract_purchase_list_json(r.text)
+    if not data:
+        log("⚠️ 找不到訂單統計表的內嵌資料（頁面結構可能改變，或查無資料）")
+        return []
+
+    items = data.get("data", [])
+    log(f"查到 {len(items)} 筆待付款 ATM 訂單")
+
+    rows = []
+    for item in items:
+        date_clean = str(item.get("date_clean") or "")
+        year_month = date_clean[:7].replace("-", ".") if len(date_clean) >= 7 else ""
+        order_no = item.get("order_no", "")
+        name = item.get("name", "")
+        total = item.get("total") or 0
+        fare = item.get("fare") or 0
+        net_amount = total - fare
+
+        rows.append({
+            "year_month": year_month,
+            "order_no": order_no,
+            "name": name,
+            "total": total,
+            "fare": fare,
+            "net_amount": net_amount,
+        })
+        log(f"  - {year_month}　{order_no}　{name}　總金額{total} - 車馬費{fare} = {net_amount}")
+
+    return rows
+
+
+def paste_atm_unpaid_list(region: str, rows: List[Dict], ui_logger=None) -> Dict:
+    """
+    把 search_atm_unpaid_orders() 的結果貼到「跟 ATM 對帳相同」的工作表（get_atm_worksheet(region)）。
+
+    規則：
+    1. 找 B 欄目前最後一個非空白列（last_b_row）。
+    2. 從 last_b_row + 5 列開始，檢查該列 I~L 欄是否已經有資料；
+       有的話再往下 5 列，直到找到 I~L 全空的列為止，才開始貼。
+    3. 每一筆資料佔一列，依序往下貼：I=年月、J=訂單編號、K=客戶姓名、L=總金額扣車馬費。
+    """
+    log = make_logger(ui_logger)
+    result = {"pasted": 0, "start_row": None, "errors": []}
+
+    if not rows:
+        log("沒有資料可以貼")
+        return result
+
+    ws = get_atm_worksheet(region)
+    all_values = memo.with_retry(ws.get_all_values)
+
+    last_b_row = 0
+    for idx, row in enumerate(all_values, start=1):
+        b_val = row[1] if len(row) > 1 else ""
+        if str(b_val).strip():
+            last_b_row = idx
+
+    start_row = last_b_row + 5
+
+    def block_has_data(row_num: int) -> bool:
+        if row_num - 1 >= len(all_values):
+            return False
+        row = all_values[row_num - 1]
+        for col_idx in range(8, 12):  # I~L 是 0-based index 8~11
+            if len(row) > col_idx and str(row[col_idx]).strip():
+                return True
+        return False
+
+    while block_has_data(start_row):
+        log(f"第 {start_row} 列的 I~L 欄已經有資料，往下移 5 列")
+        start_row += 5
+
+    updates = []
+    for i, r in enumerate(rows):
+        row_num = start_row + i
+        updates.append({
+            "range": f"I{row_num}:L{row_num}",
+            "values": [[r["year_month"], r["order_no"], r["name"], r["net_amount"]]],
+        })
+
+    memo.with_retry(ws.batch_update, updates, value_input_option="RAW")
+
+    result["pasted"] = len(rows)
+    result["start_row"] = start_row
+    log(f"✅ 已從第 {start_row} 列開始，貼上 {len(rows)} 筆資料到 I~L 欄")
+
+    return result
