@@ -2,6 +2,7 @@
 # -*- coding: utf-8 -*-
 import streamlit as st
 import re
+from datetime import date, timedelta
 import memo
 import shift
 import atm
@@ -333,6 +334,8 @@ DEFAULT_STATE = {
     "shift_dry_run_result": None,
     "lemon_candidate": None,
     "atm_result": None,
+    "atm_list_rows": None,
+    "atm_list_paste_result": None,
     "clear_person_result": None,
     "lemon_scan_entries": None,
     "lemon_clear_results": None,
@@ -658,14 +661,13 @@ with st.expander(
     if unlock_clicked:
         st.session_state.is_running = False
         st.session_state.logs = []
-        # 「重新登入」：把存住的 session 清掉，下次任何功能執行時會自動重新登入一次。
         st.session_state.auth_session = None
         st.session_state.is_logged_in = False
         st.success("已解除鎖定，下次執行任何功能時會自動重新登入。")
         st.rerun()
 
     # 切換 prod/dev 環境時，舊的 session 是綁在舊環境的網域上，不能繼續用，
-    # 偵測到環境跟上次登入時不一樣就自動失效，逼下一次執行時重新登入。
+    # 偵測到環境跟上次登入時不一樣就自動失效，下次執行任何功能時會自動重新登入。
     if (
         st.session_state.is_logged_in
         and st.session_state.auth_env
@@ -673,7 +675,7 @@ with st.expander(
     ):
         st.session_state.auth_session = None
         st.session_state.is_logged_in = False
-        st.warning("環境已切換，請重新登入。")
+        st.warning("環境已切換，下次執行功能時會自動重新登入。")
 
 if not st.session_state.credentials_ready:
     st.markdown(
@@ -1262,6 +1264,21 @@ def render_lemon_ren_section():
 # ============================================================
 
 def render_atm_section():
+    atm_mode = st.radio(
+        "",
+        ["對帳執行", "待付款清單查詢（/ATM-list）"],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="atm_mode",
+    )
+
+    if atm_mode == "對帳執行":
+        render_atm_reconcile_mode()
+    else:
+        render_atm_list_mode()
+
+
+def render_atm_reconcile_mode():
     step("3", "設定要處理的 ATM 對帳列")
 
     st.markdown(
@@ -1277,7 +1294,7 @@ def render_atm_section():
     c1, c2 = st.columns([1, 3])
 
     with c1:
-        region = st.selectbox("地區", ["台北", "台中"])
+        region = st.selectbox("地區", ["台北", "台中"], key="atm_reconcile_region")
 
     with c2:
         row_spec = st.text_input(
@@ -1357,6 +1374,130 @@ def render_atm_section():
                 "errors": [str(e)],
             }
             render_atm_result(st.session_state.atm_result, atm_result_container)
+
+
+def render_atm_list_mode():
+    step("3", "查詢 ATM 待付款名單")
+
+    st.markdown(
+        '<div class="info-strip">會用「訂購日期-迄」「勾選訂單統計表」「付款狀態：待付款」「付款方式：ATM」這組條件去查詢，'
+        '整理成「訂單服務年月｜訂單編號｜客戶名稱｜總金額扣車馬費」，貼到跟 ATM 對帳相同的工作表（從 B 欄最後一筆資料下方 5 列開始的 I~L 欄）。</div>',
+        unsafe_allow_html=True
+    )
+
+    c1, c2 = st.columns([1, 2])
+
+    with c1:
+        region = st.selectbox("要貼到哪個地區的工作表", ["台北", "台中"], key="atm_list_region")
+
+    with c2:
+        date_until = st.date_input(
+            "訂購日期-迄（預設為前一天）",
+            value=date.today() - timedelta(days=1),
+            key="atm_list_date_until",
+        )
+
+    search_btn = st.button(
+        "🔍 查詢待付款 ATM 名單",
+        use_container_width=True,
+        disabled=not st.session_state.credentials_ready,
+    )
+
+    with st.expander("執行 LOG", expanded=True):
+        log_box_local = st.empty()
+        log_box_local.code(
+            "\n".join(st.session_state.logs[-3000:])
+            if st.session_state.logs
+            else "尚未執行"
+        )
+
+    def atm_list_ui_log(msg):
+        st.session_state.logs.append(str(msg))
+        try:
+            log_box_local.code("\n".join(st.session_state.logs[-3000:]))
+        except Exception:
+            pass
+
+    if search_btn:
+        try:
+            st.session_state.logs = []
+            st.session_state.atm_list_rows = None
+            st.session_state.atm_list_paste_result = None
+            atm_list_ui_log("===== 開始查詢 ATM 待付款名單 =====")
+
+            with st.spinner("查詢中，請稍候…"):
+                session = get_session(ui_logger=atm_list_ui_log)
+                rows = atm.search_atm_unpaid_orders(
+                    session=session,
+                    date_until=date_until.strftime("%Y-%m-%d"),
+                    ui_logger=atm_list_ui_log,
+                )
+
+            st.session_state.atm_list_rows = rows
+            atm_list_ui_log("===== 查詢完成 =====")
+            st.rerun()
+
+        except Exception as e:
+            atm_list_ui_log(f"❌ 查詢失敗：{e}")
+            st.error(str(e))
+
+    rows = st.session_state.atm_list_rows
+
+    if rows is not None:
+        st.markdown("---")
+        step("4", "查詢結果")
+
+        if not rows:
+            st.info("查無符合條件的待付款 ATM 訂單。")
+        else:
+            st.metric("查到筆數", len(rows))
+
+            preview_lines = [
+                f"{r['year_month']}　{r['order_no']}　{r['name']}　${r['net_amount']}"
+                for r in rows
+            ]
+            st.code("\n".join(preview_lines))
+
+            st.markdown(
+                f'<div class="warn-strip">⚠️ 確認貼上後，會把以上 {len(rows)} 筆資料寫入「{region}」ATM 對帳工作表的 I~L 欄，沒有逐筆預覽機制。</div>',
+                unsafe_allow_html=True
+            )
+
+            paste_btn = st.button(
+                f"🚀 貼上到「{region}」ATM 對帳工作表",
+                type="primary",
+                use_container_width=True,
+            )
+
+            if paste_btn:
+                try:
+                    atm_list_ui_log(f"===== 開始貼上到「{region}」ATM 對帳工作表 =====")
+                    with st.spinner("貼上中，請稍候…"):
+                        paste_result = atm.paste_atm_unpaid_list(
+                            region=region,
+                            rows=rows,
+                            ui_logger=atm_list_ui_log,
+                        )
+
+                    st.session_state.atm_list_paste_result = paste_result
+                    atm_list_ui_log("===== 貼上完成 =====")
+                    st.rerun()
+
+                except Exception as e:
+                    atm_list_ui_log(f"❌ 貼上失敗：{e}")
+                    st.error(str(e))
+
+    if st.session_state.atm_list_paste_result is not None:
+        st.markdown("---")
+        step("5", "貼上結果")
+
+        pr = st.session_state.atm_list_paste_result
+        if pr.get("errors"):
+            st.error("；".join(pr["errors"]))
+        else:
+            st.success(
+                f"✅ 已從第 {pr.get('start_row')} 列開始，貼上 {pr.get('pasted', 0)} 筆資料到 I~L 欄。"
+            )
 
 
 # ============================================================
