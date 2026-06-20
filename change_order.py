@@ -19,13 +19,7 @@ from datetime import datetime, date, timedelta
 import requests
 from bs4 import BeautifulSoup
 
-# TODO: 依現有 memo.py 的慣例 import，例如：
-# from memo import BASE_URL, _get_csrf_token, _post_with_csrf
-# 這裡先假設有這兩個共用工具，若 memo.py 命名不同，改這裡即可
-try:
-    from memo import BASE_URL  # 例如 "https://backend.lemonclean.com.tw"
-except ImportError:
-    BASE_URL = "https://backend.lemonclean.com.tw"
+BASE_URL = "https://backend.lemonclean.com.tw"
 
 # TODO: 接上您現有寫 Google Sheet 用的工具（atm.py 的 paste_atm_unpaid_list 應該已經有一套）
 # from sheets_client import get_worksheet
