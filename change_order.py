@@ -78,25 +78,29 @@ def _get_gspread_client():
 
     sa_info = None
 
-    # 寫法一：st.secrets 裡有一個 [gcp_service_account] 區塊（dict-like）
-    try:
-        block = st.secrets.get("gcp_service_account", None)
-        if block:
-            sa_info = dict(block)
-    except Exception:
-        sa_info = None
+    # 依序嘗試這幾個 key（實際命名以 memo.py 為準：GOOGLE_SERVICE_ACCOUNT 是 TOML 區塊）
+    for key in ("GOOGLE_SERVICE_ACCOUNT", "gcp_service_account"):
+        try:
+            block = st.secrets.get(key, None)
+        except Exception:
+            block = None
 
-    # 寫法二：st.secrets 裡是一整包 JSON 字串
-    if not sa_info:
-        raw = _secret_value("GOOGLE_SERVICE_ACCOUNT", "")
-        if raw:
+        if not block:
+            continue
+
+        if isinstance(block, str):
+            # 萬一是整包 JSON 字串
             import json
-            sa_info = json.loads(raw)
+            sa_info = json.loads(block)
+        else:
+            # TOML 區塊讀出來是 AttrDict / Mapping，直接轉成一般 dict
+            sa_info = dict(block)
+        break
 
     if not sa_info:
         raise RuntimeError(
-            "找不到 Google 服務帳號憑證，請確認 secrets.toml 裡有 [gcp_service_account] "
-            "或 GOOGLE_SERVICE_ACCOUNT（JSON 字串），命名請跟 memo.py 現有設定一致"
+            "找不到 Google 服務帳號憑證，請確認 secrets.toml 裡有 [GOOGLE_SERVICE_ACCOUNT] "
+            "區塊或 GOOGLE_SERVICE_ACCOUNT（JSON 字串），命名請跟 memo.py 現有設定一致"
         )
 
     creds = Credentials.from_service_account_info(sa_info, scopes=_SCOPES)
