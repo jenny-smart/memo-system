@@ -15,8 +15,6 @@ from google.oauth2.service_account import Credentials
 # -----------------------------------------------------------------------------
 # Config
 # -----------------------------------------------------------------------------
-# Streamlit Cloud 上通常不會有 env.py。原本直接 import env 會造成整個 App 掛掉。
-# 這裡改成：有 env.py 就讀 env.py；沒有就從 st.secrets / 預設值讀。
 try:
     import env  # type: ignore
 except Exception:
@@ -627,7 +625,7 @@ def search_by_conditions_once(session, date_mode: str, date_start: str, date_end
         "isRefund": "",
         "payway": "",
         "purchase_status": purchase_status,
-        "progress_status": "0",  # 目標單固定未處理
+        "progress_status": "0",
         "invoiceStatus": "",
         "otherFee": "",
         "orderBy": "",
@@ -1137,7 +1135,7 @@ def process_single_case(session, order, name, phone, addr, date, log):
     }
 
 
-def preview_by_phone(phone, ui_logger=None):
+def preview_by_phone(phone, ui_logger=None, session=None):
     CURRENT_ROW_LOGS.clear()
     log = make_logger(ui_logger)
 
@@ -1148,7 +1146,7 @@ def preview_by_phone(phone, ui_logger=None):
     log("\n===== 預覽 BY電話 =====")
     log(f"輸入電話: {phone}")
 
-    session = login(ui_logger=ui_logger)
+    session = session or login(ui_logger=ui_logger)
 
     log("[查詢列表] 開始抓電話主列表")
     items = search_all_orders_by_phone(session, phone)
@@ -1181,17 +1179,19 @@ def preview_by_phone(phone, ui_logger=None):
     return preview
 
 
-def preview_by_phone_multi(phone_text, ui_logger=None):
+def preview_by_phone_multi(phone_text, ui_logger=None, session=None):
     phones = parse_phone_list(phone_text)
     if not phones:
         raise RuntimeError("請輸入至少一支有效電話")
+
+    session = session or login(ui_logger=ui_logger)
 
     all_rows = []
     seen = set()
     for idx, phone in enumerate(phones, start=1):
         if ui_logger:
             ui_logger(f"[多電話查詢] {idx}/{len(phones)}：{phone}")
-        rows = preview_by_phone(phone, ui_logger=ui_logger)
+        rows = preview_by_phone(phone, ui_logger=ui_logger, session=session)
         for row in rows:
             oid = row.get("order_id", "")
             if oid and oid not in seen:
@@ -1208,7 +1208,7 @@ def preview_by_phone_multi(phone_text, ui_logger=None):
     return all_rows
 
 
-def preview_by_conditions(date_mode, date_start, date_end, purchase_status_name, limit=None, ui_logger=None):
+def preview_by_conditions(date_mode, date_start, date_end, purchase_status_name, limit=None, ui_logger=None, session=None):
     CURRENT_ROW_LOGS.clear()
     log = make_logger(ui_logger)
 
@@ -1222,7 +1222,7 @@ def preview_by_conditions(date_mode, date_start, date_end, purchase_status_name,
     log("處理狀態: 未處理")
     log("查詢列表: 不先限制處理筆數")
 
-    session = login(ui_logger=ui_logger)
+    session = session or login(ui_logger=ui_logger)
 
     log("[查詢列表] 開始抓符合條件的主列表")
     items = search_by_conditions(session, date_mode, date_start, date_end, purchase_status_name)
@@ -1328,7 +1328,7 @@ def get_first_n_pending_rows(limit: int) -> List[int]:
     return row_nums
 
 
-def main_first_n_pending(limit: int, ui_logger=None):
+def main_first_n_pending(limit: int, ui_logger=None, session=None):
     row_nums = get_first_n_pending_rows(limit)
     if not row_nums:
         return {
@@ -1340,10 +1340,10 @@ def main_first_n_pending(limit: int, ui_logger=None):
             "errors": ["沒有可處理的未處理列"],
         }
     row_spec = ",".join(str(x) for x in row_nums)
-    return main(row_spec=row_spec, force=False, ui_logger=ui_logger)
+    return main(row_spec=row_spec, force=False, ui_logger=ui_logger, session=session)
 
 
-def main(row_spec="2", force=False, ui_logger=None):
+def main(row_spec="2", force=False, ui_logger=None, session=None):
     ws = get_ws()
     log_ws = get_log_ws()
     rows = with_retry(ws.get_all_values)
@@ -1355,7 +1355,7 @@ def main(row_spec="2", force=False, ui_logger=None):
     updates = []
     updated_row_numbers = []
 
-    session = login(ui_logger=ui_logger)
+    session = session or login(ui_logger=ui_logger)
 
     for r in row_nums:
         CURRENT_ROW_LOGS.clear()
@@ -1472,7 +1472,7 @@ def main(row_spec="2", force=False, ui_logger=None):
     return result
 
 
-def main_by_selected_order_ids(order_ids, ui_logger=None):
+def main_by_selected_order_ids(order_ids, ui_logger=None, session=None):
     CURRENT_ROW_LOGS.clear()
     log = make_logger(ui_logger)
     log_ws = get_log_ws()
@@ -1485,7 +1485,7 @@ def main_by_selected_order_ids(order_ids, ui_logger=None):
         result["errors"].append(msg)
         return result
 
-    session = login(ui_logger=ui_logger)
+    session = session or login(ui_logger=ui_logger)
     source_type = "BY勾選執行"
     source_value = ",".join(order_ids[:50])
 
@@ -1550,7 +1550,7 @@ def main_by_selected_order_ids(order_ids, ui_logger=None):
 
 
 # -----------------------------------------------------------------------------
-# CLI 入口（保留 `python3 memo.py 4` 這種命令列執行方式，不含任何 Streamlit UI）
+# CLI 入口
 # -----------------------------------------------------------------------------
 if __name__ == "__main__":
     import sys
