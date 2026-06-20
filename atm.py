@@ -209,11 +209,13 @@ def process_atm_rows(
     do_issue_invoice: bool = True,
     do_send_mail: bool = True,
     ui_logger=None,
+    session=None,
 ) -> Dict:
     """
     region: "台北" 或 "台中"
     row_spec: 跟 memo.parse_row_spec 一樣的格式，例如 "241,243,246-248"
     do_mark_paid / do_issue_invoice / do_send_mail: 各自開關，方便你只想做某幾步
+    session: 可選，傳入已登入的 session 就重用，不傳則自己登入一次
     """
     log = make_logger(ui_logger)
     result = {
@@ -231,7 +233,7 @@ def process_atm_rows(
     ws = get_atm_worksheet(region)
     rows = memo.with_retry(ws.get_all_values)
 
-    session = memo.login(ui_logger=ui_logger)
+    session = session or memo.login(ui_logger=ui_logger)
 
     for r in row_nums:
         try:
