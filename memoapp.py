@@ -523,7 +523,7 @@ def render_preview_blocks(rows):
     m3.metric("無可參照來源", len(no_rows))
 
     st.markdown(
-        '<div class="info-strip">每一列是「目標訂單」；若有來源訂單，代表已找到最近一筆同地址＋已付款＋已處理＋有備註的來源。</div>',
+        '<div class="info-strip">每一列是「目標訂單」；若有來源訂單，代表已找到最近一筆同地址＋已付款＋已處理＋有備註的來源。若該地址完全沒有歷史訂單，會視為新成單並自動帶入固定提醒文字。</div>',
         unsafe_allow_html=True
     )
 
@@ -578,6 +578,14 @@ def render_preview_blocks(rows):
             source_status_name = row.get("source_status_name", "")
             source_notice_preview = row.get("source_notice_preview", "")
             can_autofill = row.get("can_autofill", False)
+            is_new_order = row.get("is_new_order", False)
+
+            if is_new_order:
+                suggestion_text = "新成單，將帶入固定提醒文字"
+            elif can_autofill:
+                suggestion_text = "建議執行"
+            else:
+                suggestion_text = "無可參照來源，請人工確認"
 
             st.markdown(f"""
             <div class="{card_cls}">
@@ -597,7 +605,7 @@ def render_preview_blocks(rows):
                     <b>來源備註：</b>{source_notice_preview or "無"}
                 </div>
                 <div class="preview-sub" style="margin-top:8px;">
-                    <b>建議：</b>{"建議執行" if can_autofill else "無可參照來源，請人工確認"}
+                    <b>建議：</b>{suggestion_text}
                 </div>
             </div>
             """, unsafe_allow_html=True)
@@ -612,7 +620,7 @@ def render_preview_blocks(rows):
     step("5", "執行確認")
 
     st.metric("目前勾選", len(selected_ids))
-    st.caption("執行後會把來源客服備註寫入目標訂單，並把目標訂單服務狀態改為已處理。")
+    st.caption("執行後會把來源客服備註（或新成單固定提醒文字）寫入目標訂單，並把目標訂單服務狀態改為已處理。")
 
     return selected_ids
 
