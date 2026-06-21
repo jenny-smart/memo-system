@@ -577,12 +577,17 @@ def render_preview_blocks(rows):
             source_purchase_status_name = row.get("source_purchase_status_name", "")
             source_status_name = row.get("source_status_name", "")
             source_notice_preview = row.get("source_notice_preview", "")
-            source_notice_preview_html = source_notice_preview.replace("\n", "<br>") if source_notice_preview else ""
-            can_autofill = row.get("can_autofill", False)
             is_new_order = row.get("is_new_order", False)
 
             if is_new_order:
-                suggestion_text = "新成單，將帶入固定提醒文字"
+                source_notice_display_html = "（請於下方欄位編輯要寫入後台的提醒文字）"
+            else:
+                source_notice_display_html = source_notice_preview.replace("\n", "<br>") if source_notice_preview else ""
+
+            can_autofill = row.get("can_autofill", False)
+
+            if is_new_order:
+                suggestion_text = "新成單，將帶入下方可編輯的提醒文字"
             elif can_autofill:
                 suggestion_text = "建議執行"
             else:
@@ -603,13 +608,21 @@ def render_preview_blocks(rows):
                     <b>來源服務日期：</b>{source_service_date or "-"}　
                     <b>來源付款狀態：</b>{source_purchase_status_name or "-"}　
                     <b>來源服務狀態：</b>{source_status_name or "-"}<br>
-                    <b>來源備註：</b>{source_notice_preview_html or "無"}
+                    <b>來源備註：</b>{source_notice_display_html or "無"}
                 </div>
                 <div class="preview-sub" style="margin-top:8px;">
                     <b>建議：</b>{suggestion_text}
                 </div>
             </div>
             """, unsafe_allow_html=True)
+
+            if is_new_order:
+                st.text_area(
+                    f"✏️ 新成單提醒文字（{order_id}，可自行編輯，將寫入後台備註）",
+                    value=st.session_state.get(f"new_notice_{order_id}", memo.DEFAULT_NEW_ORDER_NOTICE),
+                    key=f"new_notice_{order_id}",
+                    height=130,
+                )
 
             if checked and order_id:
                 selected_ids.append(order_id)
@@ -991,12 +1004,18 @@ def render_memo_section():
                     raise RuntimeError("請先查詢列表")
 
                 current_selected_ids = []
+                custom_notices = {}
 
                 for row in st.session_state.preview_rows:
                     oid = str(safe_get(row, "order_id", default="")).strip()
 
                     if oid and st.session_state.get(f"pick_{oid}", False):
                         current_selected_ids.append(oid)
+
+                        if row.get("is_new_order"):
+                            custom_notices[oid] = st.session_state.get(
+                                f"new_notice_{oid}", memo.DEFAULT_NEW_ORDER_NOTICE
+                            )
 
                 if not current_selected_ids:
                     raise RuntimeError("請先勾選要執行的資料")
@@ -1010,6 +1029,7 @@ def render_memo_section():
                         order_ids=current_selected_ids,
                         ui_logger=ui_log,
                         session=session,
+                        custom_notices=custom_notices,
                     )
 
             ui_log("===== 執行完成 =====")
