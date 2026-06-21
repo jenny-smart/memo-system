@@ -11,8 +11,7 @@ ATM 對帳自動化模組
    - 按「已付款」：GET /purchase/set_success/{purchase_id}
    - 按「開立發票」：GET /purchase/make_invoice/{purchase_id}
    - 按「發確認信」：GET /purchase/mail_success/{order_no}
-4. 動作後重新查詢一次該筆訂單，把最新的「付款時間」「發票號碼」寫回 ATM Sheet 的 P/Q 欄，
-   並把 R 欄填上「已發送」
+4. 動作後重新查詢一次該筆訂單，把 P=對帳完成時間、Q=付款時間、R=發票號碼、S=發確認信、T=已更新系統 寫回 ATM Sheet
 
 ⚠️ 這三個後台動作都是「點了就送出」，沒有像 shift 那樣的 dry-run 預覽機制
 （因為它們本身就是簡單的 GET 觸發，沒有複雜的合併邏輯）。
@@ -21,7 +20,9 @@ ATM 對帳自動化模組
 """
 import json
 import re
+from datetime import datetime
 from typing import Dict, List, Optional, Callable
+from difflib import SequenceMatcher
 
 import gspread
 from google.oauth2.service_account import Credentials
@@ -40,11 +41,13 @@ ATM_SHEET_IDS = {
 # 兩份 ATM Sheet 實際要處理的分頁名稱都是「ATM」
 ATM_WORKSHEET_TITLE = "ATM"
 
-# 欄位位置（1-based）：J=10, P=16, Q=17, R=18
+# 欄位位置（1-based）：J=10, P=16, Q=17, R=18, S=19, T=20
 COL_ORDER_NO = 10
-COL_PAID_AT = 16
-COL_INVOICE_NO = 17
-COL_MAIL_STATUS = 18
+COL_RECONCILED_AT = 16  # P 對帳完成時間
+COL_PAID_AT = 17        # Q 付款時間
+COL_INVOICE_NO = 18     # R 發票號碼
+COL_MAIL_STATUS = 19    # S 發確認信
+COL_RECON_STATUS = 20   # T 對帳狀態
 
 
 def make_logger(ui_logger: Optional[Callable[[str], None]] = None):
@@ -54,6 +57,10 @@ def make_logger(ui_logger: Optional[Callable[[str], None]] = None):
         if ui_logger:
             ui_logger(msg)
     return _log
+
+
+def _now_text() -> str:
+    return datetime.now().strftime("%Y/%m/%d %H:%M:%S")
 
 
 # -----------------------------------------------------------------------------
@@ -245,9 +252,15 @@ def process_atm_rows(
 
             row = rows[r - 1]
             order_no = memo.safe_cell(row, COL_ORDER_NO)
+            recon_status = memo.safe_cell(row, COL_RECON_STATUS)
 
             if not order_no:
-                log(f"⏭ 第{r}列：J欄沒有訂單編號，略過")
+                log(f"⏭ 第{r}列：J欄沒有訂單編號，可能是非訂單收入，略過系統更新")
+                result["skipped"] += 1
+                continue
+
+            if str(recon_status).strip() in ["需確認", "非訂單", "非訂單收入", "疑似拆單"]:
+                log(f"⏭ 第{r}列：T欄狀態為「{recon_status}」，不執行系統更新")
                 result["skipped"] += 1
                 continue
 
@@ -291,12 +304,14 @@ def process_atm_rows(
             paid_at = purchase.get("paid_at") or ""
             invoice_no = purchase.get("invoice_no") or ""
 
+            updates.append((COL_RECONCILED_AT, _now_text()))
             if do_mark_paid and paid_at:
                 updates.append((COL_PAID_AT, paid_at))
             if do_issue_invoice and invoice_no:
                 updates.append((COL_INVOICE_NO, invoice_no))
             if do_send_mail:
                 updates.append((COL_MAIL_STATUS, "已發送"))
+            updates.append((COL_RECON_STATUS, "已更新系統"))
 
             for col, value in updates:
                 memo.with_retry(ws.update_cell, r, col, value)
@@ -381,6 +396,73 @@ def _note_matches_name(bank_note: str, customer_name: str) -> bool:
     return note_compact in name_compact or name_compact in note_compact
 
 
+def _compact_text(value: str) -> str:
+    """模糊比對用：移除空白與常見符號，只保留中英文數字。"""
+    return re.sub(r"[^0-9A-Za-z\u4e00-\u9fff]", "", str(value or "")).lower()
+
+
+def _similar_text(a: str, b: str, threshold: float = 0.72) -> bool:
+    """F 欄備註與 K 欄姓名相近時，列為需確認候選。"""
+    aa = _compact_text(a)
+    bb = _compact_text(b)
+    if not aa or not bb:
+        return False
+    if aa in bb or bb in aa:
+        return True
+    return SequenceMatcher(None, aa, bb).ratio() >= threshold
+
+
+def _normalize_datetime_text(value: str) -> str:
+    """把日期時間字串正規化成純數字，例如 2026/06/18 12:14:00 -> 20260618121400。"""
+    return re.sub(r"\D", "", str(value or ""))
+
+
+def _datetime_equals(a: str, b: str) -> bool:
+    """M 欄若是日期+時間，且等於 B 欄交易時間，列為需確認候選。"""
+    aa = _normalize_datetime_text(a)
+    bb = _normalize_datetime_text(b)
+    if not aa or not bb:
+        return False
+    # 允許秒數缺漏，因此用較短長度比對，但至少要到分鐘 YYYYMMDDHHMM。
+    n = min(len(aa), len(bb))
+    if n < 12:
+        return False
+    return aa[:n] == bb[:n]
+
+
+def _build_confirm_code(candidate: Dict) -> str:
+    """需確認候選寫到 M 欄的提示；若原 M 有值就保留，沒有就標示需確認。"""
+    raw = str(candidate.get("last_code") or "").strip()
+    return raw if raw else "需確認"
+
+
+def _is_non_order_candidate(candidate: Dict) -> bool:
+    """J 欄空白但有姓名/金額/類別時，視為非訂單收入。"""
+    order_no = str(candidate.get("order_no") or "").strip()
+    name = str(candidate.get("name") or "").strip()
+    amount = candidate.get("amount")
+    service_type = str(candidate.get("service_type") or "").strip()
+    fee_type = str(candidate.get("fee_type") or "").strip()
+    return (not order_no) and bool(name) and amount is not None and bool(service_type or fee_type)
+
+
+def _is_split_payment_candidate(income: int, candidate: Dict, note: str) -> bool:
+    """客人分筆匯款：入帳金額小於候選金額，且姓名或末碼能對上。"""
+    amount = candidate.get("amount")
+    if amount is None or income is None:
+        return False
+    try:
+        if int(income) >= int(amount):
+            return False
+    except Exception:
+        return False
+    if candidate.get("last_code") and _bank_note_has_code(note, candidate.get("last_code")):
+        return True
+    if _note_matches_name(note, candidate.get("name")) or _similar_text(note, candidate.get("name")):
+        return True
+    return False
+
+
 def _format_match_text(year_month: str, service_type: str, fee_type: str, order_no: str, name: str) -> str:
     service_type = service_type or "清潔"
     fee_type = fee_type or "服務費用"
@@ -393,6 +475,7 @@ def auto_match_bank_rows(
     overwrite_existing: bool = False,
     default_service_type: str = "清潔",
     default_fee_type: str = "服務費用",
+    allow_review_prefill: bool = True,
     ui_logger=None,
 ) -> Dict:
     """
@@ -418,6 +501,9 @@ def auto_match_bank_rows(
         "updated_orders": 0,
         "ambiguous": 0,
         "unmatched": 0,
+        "confirm_required": 0,
+        "non_order": 0,
+        "split_payment": 0,
         "errors": [],
     }
 
@@ -432,6 +518,7 @@ def auto_match_bank_rows(
         log("未指定銀行列號，將掃描全部列")
 
     # 1-based 欄位：E/F/G/I/J/K/L/M/N/O
+    COL_BANK_TIME = 2
     COL_INCOME = 5
     COL_NOTE = 6
     COL_SUMMARY = 7
@@ -446,27 +533,42 @@ def auto_match_bank_rows(
     candidates = []
     for idx, row in enumerate(rows, start=1):
         order_no = memo.safe_cell(row, COL_MATCH_ORDER_NO)
+        name = memo.safe_cell(row, COL_NAME)
         amount = _to_int_amount(memo.safe_cell(row, COL_AMOUNT))
-        if not order_no or amount is None:
+        last_code = memo.safe_cell(row, COL_LAST_CODE)
+        service_type = memo.safe_cell(row, COL_SERVICE_TYPE) or default_service_type
+        fee_type = memo.safe_cell(row, COL_FEE_TYPE) or default_fee_type
+
+        # 正常訂單：J 有訂單編號
+        # 非訂單收入：J 空白，但 K 姓名 + L 金額 + N/O 類別存在
+        if amount is None:
             continue
+        if not order_no and not (name and (service_type or fee_type)):
+            continue
+
         candidates.append({
             "row": idx,
             "year_month": memo.safe_cell(row, COL_MONTH),
             "order_no": order_no,
-            "name": memo.safe_cell(row, COL_NAME),
+            "name": name,
             "amount": amount,
-            "last_code": memo.safe_cell(row, COL_LAST_CODE),
-            "service_type": memo.safe_cell(row, COL_SERVICE_TYPE) or default_service_type,
-            "fee_type": memo.safe_cell(row, COL_FEE_TYPE) or default_fee_type,
+            "last_code": last_code,
+            "service_type": service_type,
+            "fee_type": fee_type,
         })
 
     used_order_nos = set()
+    matched_names = set()
     # 已經配在銀行列上的訂單，避免同一筆待付款被重複配到多筆入帳。
+    # 同時記錄上方已對帳過的姓名，供「需確認候選」判斷。
     for row in rows:
         income = _to_int_amount(memo.safe_cell(row, COL_INCOME))
         order_no = memo.safe_cell(row, COL_MATCH_ORDER_NO)
+        name_val = memo.safe_cell(row, COL_NAME)
         if income is not None and order_no:
             used_order_nos.add(order_no)
+            if name_val:
+                matched_names.add(_compact_text(name_val))
 
     log(f"可配對候選訂單：{len(candidates)} 筆")
 
@@ -476,6 +578,7 @@ def auto_match_bank_rows(
                 continue
 
             income = _to_int_amount(memo.safe_cell(row, COL_INCOME))
+            bank_time = memo.safe_cell(row, COL_BANK_TIME)
             note = memo.safe_cell(row, COL_NOTE)
             current_order_no = memo.safe_cell(row, COL_MATCH_ORDER_NO)
 
@@ -491,13 +594,16 @@ def auto_match_bank_rows(
 
             amount_candidates = [c for c in candidates if c["amount"] == income]
             if not overwrite_existing:
-                amount_candidates = [c for c in amount_candidates if c["order_no"] not in used_order_nos or c["order_no"] == current_order_no]
+                amount_candidates = [c for c in amount_candidates if (not c["order_no"]) or c["order_no"] not in used_order_nos or c["order_no"] == current_order_no]
 
+            split_candidates = [c for c in candidates if _is_split_payment_candidate(income, c, note)]
             code_matches = [c for c in amount_candidates if c["last_code"] and _bank_note_has_code(note, c["last_code"])]
             name_matches = [c for c in amount_candidates if _note_matches_name(note, c["name"])]
 
             match_type = ""
             matches = []
+            needs_confirm = False
+
             if len(code_matches) == 1:
                 matches = code_matches
                 match_type = "末碼+金額"
@@ -513,41 +619,103 @@ def auto_match_bank_rows(
             elif len(amount_candidates) == 1:
                 matches = amount_candidates
                 match_type = "唯一金額"
+            elif len(split_candidates) == 1:
+                matches = [dict(split_candidates[0], split_reason="疑似拆單")]
+                match_type = "疑似拆單"
+                needs_confirm = True
+            elif len(split_candidates) > 1:
+                matches = [dict(c, split_reason="疑似拆單") for c in split_candidates]
+                match_type = "疑似拆單"
+                needs_confirm = True
             else:
                 matches = []
+
+            # 需確認候選：
+            # 1) 候選列 M 欄是日期+時間，且等於銀行 B 欄
+            # 2) 銀行 F 欄與候選 K 欄姓名相近
+            # 3) 候選 K 欄姓名已出現在上方已對帳列表
+            if not matches and allow_review_prefill:
+                review_matches = []
+                for c in amount_candidates:
+                    reasons = []
+                    if _datetime_equals(c.get("last_code", ""), bank_time):
+                        reasons.append("M欄日期時間=B欄")
+                    if _similar_text(note, c.get("name", "")):
+                        reasons.append("F欄與K欄姓名相近")
+                    if _compact_text(c.get("name", "")) in matched_names:
+                        reasons.append("K欄姓名曾出現在上方已對帳列表")
+                    if reasons:
+                        cc = dict(c)
+                        cc["review_reasons"] = reasons
+                        review_matches.append(cc)
+
+                if len(review_matches) == 1:
+                    matches = review_matches
+                    match_type = "需確認候選：" + "、".join(review_matches[0].get("review_reasons", []))
+                    needs_confirm = True
+                elif len(review_matches) > 1:
+                    matches = review_matches
+                    match_type = "需確認候選"
 
             if len(matches) == 1:
                 c = matches[0]
                 summary = _format_match_text(
                     c["year_month"], c["service_type"], c["fee_type"], c["order_no"], c["name"]
                 )
+                is_non_order = _is_non_order_candidate(c)
+                is_split = str(match_type).startswith("疑似拆單") or bool(c.get("split_reason"))
+                if is_non_order:
+                    needs_confirm = True
+                    status_text = "非訂單收入"
+                    display_last_code = _build_confirm_code(c)
+                elif is_split:
+                    needs_confirm = True
+                    status_text = "疑似拆單"
+                    display_last_code = _build_confirm_code(c)
+                elif needs_confirm:
+                    status_text = "需確認"
+                    display_last_code = _build_confirm_code(c)
+                else:
+                    status_text = "已配對"
+                    display_last_code = c["last_code"]
+
                 values = [[
-                    summary,
                     c["year_month"],
                     c["order_no"],
                     c["name"],
                     c["amount"],
-                    c["last_code"],
+                    display_last_code,
                     c["service_type"],
                     c["fee_type"],
+                    "", "", "", "", "",
+                    status_text,
                 ]]
-                # 僅寫入 I:O，不覆蓋 G 欄
-                memo.with_retry(ws.update, f"I{idx}:O{idx}", [values[0][1:]], value_input_option="RAW")
+                # 寫入 I:T，不覆蓋 G/H 欄；P:S 留給系統對帳結果
+                memo.with_retry(ws.update, f"I{idx}:T{idx}", values, value_input_option="RAW")
 
-                # 若候選訂單是從下方待付款列表移上來，成功配對後清空原候選列 I:O，
-                # 避免同一筆訂單留在下方列表重複出現。
                 source_row = int(c.get("row") or 0)
-                if source_row and source_row != idx:
-                    memo.with_retry(ws.update, f"I{source_row}:O{source_row}", [["", "", "", "", "", "", ""]], value_input_option="RAW")
-                    log(f"↳ 已清空原候選列第{source_row}列 I:O")
+                if needs_confirm:
+                    result["confirm_required"] += 1
+                    if is_non_order:
+                        result["non_order"] += 1
+                    if is_split:
+                        result["split_payment"] += 1
+                    result["errors"].append(f"第{idx}列：已預填需確認 {status_text} {c['order_no'] or '-'} {c['name']}（{match_type}）")
+                    log(f"⚠️ 第{idx}列：已預填需使用者確認 → {c['order_no'] or '-'} {c['name']} ${c['amount']}（{status_text}／{match_type}）")
+                    log("↳ 因需確認，原下方候選列不清空，請確認後再手動處理。")
+                else:
+                    if source_row and source_row != idx:
+                        memo.with_retry(ws.update, f"I{source_row}:T{source_row}", [["", "", "", "", "", "", "", "", "", "", "", "", ""]], value_input_option="RAW")
+                        log(f"↳ 已清空原候選列第{source_row}列 I:T")
+                    log(f"✅ 第{idx}列：{match_type} → {c['order_no']} {c['name']} ${c['amount']}")
 
-                used_order_nos.add(c["order_no"])
+                if c["order_no"]:
+                    used_order_nos.add(c["order_no"])
                 result["success"] += 1
                 result["updated_orders"] += 1
-                log(f"✅ 第{idx}列：{match_type} → {c['order_no']} {c['name']} ${c['amount']}")
 
             elif len(matches) > 1:
-                text = "多筆候選：" + "、".join(f"{c['order_no']} {c['name']}" for c in matches[:5])
+                text = "多筆候選：" + "、".join(f"{c.get('order_no') or '-'} {c.get('name')}" for c in matches[:5])
                 result["ambiguous"] += 1
                 result["failed"] += 1
                 result["errors"].append(f"第{idx}列：{text}")
@@ -559,7 +727,7 @@ def auto_match_bank_rows(
                     text = f"待人工確認：同金額候選 {len(amount_candidates)} 筆"
                 elif len(amount_candidates) == 1:
                     c = amount_candidates[0]
-                    text = f"待人工確認：同金額候選 {c['order_no']} {c['name']}"
+                    text = f"待人工確認：同金額候選 {c.get('order_no') or '-'} {c['name']}"
                 result["unmatched"] += 1
                 result["failed"] += 1
                 result["errors"].append(f"第{idx}列：{text}")
