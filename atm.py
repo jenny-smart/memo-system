@@ -94,6 +94,44 @@ def _clear_data_validation(ws, row: int, col_start: int, col_end: int):
         pass
 
 
+def _copy_data_validation(ws, source_row: int, target_row: int, columns: List[int]):
+    """
+    將指定欄位的資料驗證（下拉選單）從 source_row 複製到 target_row。
+    只複製 data validation，不複製值或格式。
+    """
+    if not source_row or not target_row or source_row == target_row:
+        return
+    try:
+        sheet_id = ws.id
+        requests = []
+        for col in columns:
+            requests.append({
+                "copyPaste": {
+                    "source": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": source_row - 1,
+                        "endRowIndex": source_row,
+                        "startColumnIndex": col - 1,
+                        "endColumnIndex": col,
+                    },
+                    "destination": {
+                        "sheetId": sheet_id,
+                        "startRowIndex": target_row - 1,
+                        "endRowIndex": target_row,
+                        "startColumnIndex": col - 1,
+                        "endColumnIndex": col,
+                    },
+                    "pasteType": "PASTE_DATA_VALIDATION",
+                    "pasteOrientation": "NORMAL",
+                }
+            })
+        if requests:
+            memo.with_retry(ws.spreadsheet.batch_update, {"requests": requests})
+    except Exception:
+        # 複製下拉選單失敗時不阻斷配對；值仍會正常寫入。
+        pass
+
+
 # -----------------------------------------------------------------------------
 # Google Sheet
 # -----------------------------------------------------------------------------
@@ -724,6 +762,12 @@ def auto_match_bank_rows(
                     c["service_type"],
                     c["fee_type"],
                 ]]
+                source_row = int(c.get("row") or 0)
+
+                # I/N/O 欄必須維持下拉選單；若目標列沒有驗證，從原候選列複製過來。
+                # I=服務月份、N=服務類別、O=費用類別。
+                _copy_data_validation(ws, source_row, idx, [COL_MONTH, COL_SERVICE_TYPE, COL_FEE_TYPE])
+
                 # 寫入 I:O，不覆蓋 G/H 欄；P:S 保留給系統對帳結果；T 欄寫狀態
                 memo.with_retry(ws.update, f"I{idx}:O{idx}", values, value_input_option="RAW")
                 # P 與 T 可能原本是下拉選單，先清除資料驗證再寫入時間/狀態。
@@ -732,7 +776,14 @@ def auto_match_bank_rows(
                 memo.with_retry(ws.update_cell, idx, COL_RECONCILED_AT, _now_text())
                 memo.with_retry(ws.update_cell, idx, COL_RECON_STATUS, status_text)
 
-                source_row = int(c.get("row") or 0)
+                # 只要已經移到上方指定對帳列，不論是否需確認/非訂單/疑似拆單，
+                # 原下方待配對列表都要清空，避免同一筆留在列表中重複配對。
+                if source_row and source_row != idx:
+                    memo.with_retry(ws.update, f"I{source_row}:O{source_row}", [["", "", "", "", "", "", ""]], value_input_option="RAW")
+                    _clear_data_validation(ws, source_row, COL_RECON_STATUS, COL_RECON_STATUS)
+                    memo.with_retry(ws.update_cell, source_row, COL_RECON_STATUS, "")
+                    log(f"↳ 已從下方待配對列表移除原候選列第{source_row}列 I:O 與 T")
+
                 if needs_confirm:
                     result["confirm_required"] += 1
                     if is_non_order:
@@ -741,13 +792,7 @@ def auto_match_bank_rows(
                         result["split_payment"] += 1
                     result["errors"].append(f"第{idx}列：已預填需確認 {status_text} {c['order_no'] or '-'} {c['name']}（{match_type}）")
                     log(f"⚠️ 第{idx}列：已預填需使用者確認 → {c['order_no'] or '-'} {c['name']} ${c['amount']}（{status_text}／{match_type}）")
-                    log("↳ 因需確認，原下方候選列不清空，請確認後再手動處理。")
                 else:
-                    if source_row and source_row != idx:
-                        memo.with_retry(ws.update, f"I{source_row}:O{source_row}", [["", "", "", "", "", "", ""]], value_input_option="RAW")
-                        _clear_data_validation(ws, source_row, COL_RECON_STATUS, COL_RECON_STATUS)
-                        memo.with_retry(ws.update_cell, source_row, COL_RECON_STATUS, "")
-                        log(f"↳ 已清空原候選列第{source_row}列 I:O 與 T")
                     log(f"✅ 第{idx}列：{match_type} → {c['order_no']} {c['name']} ${c['amount']}")
 
                 if c["order_no"]:
