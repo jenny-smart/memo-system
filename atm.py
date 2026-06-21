@@ -687,11 +687,10 @@ def auto_match_bank_rows(
                     display_last_code,
                     c["service_type"],
                     c["fee_type"],
-                    "", "", "", "", "",
-                    status_text,
                 ]]
-                # 寫入 I:T，不覆蓋 G/H 欄；P:S 留給系統對帳結果
-                memo.with_retry(ws.update, f"I{idx}:T{idx}", values, value_input_option="RAW")
+                # 寫入 I:O，不覆蓋 G/H 欄；P:S 保留給系統對帳結果；T 欄寫狀態
+                memo.with_retry(ws.update, f"I{idx}:O{idx}", values, value_input_option="RAW")
+                memo.with_retry(ws.update_cell, idx, COL_RECON_STATUS, status_text)
 
                 source_row = int(c.get("row") or 0)
                 if needs_confirm:
@@ -705,8 +704,9 @@ def auto_match_bank_rows(
                     log("↳ 因需確認，原下方候選列不清空，請確認後再手動處理。")
                 else:
                     if source_row and source_row != idx:
-                        memo.with_retry(ws.update, f"I{source_row}:T{source_row}", [["", "", "", "", "", "", "", "", "", "", "", "", ""]], value_input_option="RAW")
-                        log(f"↳ 已清空原候選列第{source_row}列 I:T")
+                        memo.with_retry(ws.update, f"I{source_row}:O{source_row}", [["", "", "", "", "", "", ""]], value_input_option="RAW")
+                        memo.with_retry(ws.update_cell, source_row, COL_RECON_STATUS, "")
+                        log(f"↳ 已清空原候選列第{source_row}列 I:O 與 T")
                     log(f"✅ 第{idx}列：{match_type} → {c['order_no']} {c['name']} ${c['amount']}")
 
                 if c["order_no"]:
