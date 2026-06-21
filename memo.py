@@ -541,7 +541,7 @@ def parse_purchase_list_page(html: str) -> List[Dict]:
     return list(dedup.values())
 
 
-def search_all_orders_by_phone(session, phone) -> List[Dict]:
+def search_all_orders_by_phone(session, phone, log=None) -> List[Dict]:
     r = session_get(
         session,
         PURCHASE_URL,
@@ -571,7 +571,41 @@ def search_all_orders_by_phone(session, phone) -> List[Dict]:
         },
     )
     r.raise_for_status()
+
+    if log:
+        debug_dump_list_rows(r.text, log, max_rows=20)
+
     return parse_purchase_list_page(r.text)
+
+
+def debug_dump_list_rows(html: str, log, max_rows: int = 20):
+    """
+    暫時除錯用：把列表頁每一列的原始文字印到 log 裡，
+    用來確認「未處理／已處理／已完成」這幾個字到底有沒有真的出現在頁面文字裡，
+    以及解析出來的 status / status_code 是否正確。
+    確認完問題後可以把呼叫這個函式的地方移除。
+    """
+    soup = BeautifulSoup(html, "html.parser")
+    rows = soup.select("table tbody tr")
+    if not rows:
+        rows = soup.select("tr")
+
+    log(f"[DEBUG] 列表頁原始 <tr> 數量：{len(rows)}")
+
+    shown = 0
+    for tr in rows:
+        txt = tr.get_text(" | ", strip=True)
+        if not txt:
+            continue
+        if shown >= max_rows:
+            log(f"[DEBUG] 已超過 {max_rows} 列，後面省略")
+            break
+
+        parsed = parse_purchase_row_text(tr.get_text("\n", strip=True))
+        log(f"[DEBUG] ----- 第 {shown + 1} 列 -----")
+        log(f"[DEBUG] 原始文字：{txt[:300]}")
+        log(f"[DEBUG] 解析結果：order_no={parsed['order_no']}，status={parsed['status']}，status_code={parsed['status_code']}，purchase_status_name={parsed['purchase_status_name']}")
+        shown += 1
 
 
 def search_orders_by_order_no(session, order_no: str) -> List[Dict]:
@@ -1210,7 +1244,7 @@ def preview_by_phone(phone, ui_logger=None, session=None):
     session = session or login(ui_logger=ui_logger)
 
     log("[查詢列表] 開始抓電話主列表")
-    items = search_all_orders_by_phone(session, phone)
+    items = search_all_orders_by_phone(session, phone, log=log)
     log(f"[查詢列表] 主列表共 {len(items)} 筆")
 
     items = enrich_items_from_detail(
