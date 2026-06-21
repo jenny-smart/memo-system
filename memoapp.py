@@ -2130,39 +2130,115 @@ SCENARIO_OPTIONS = [
     "異動費(待退款)",
     "異動平日轉週末(待收款)",
     "異動週末轉平日(待退款)",
-    "服務前加時(待收款)",
-    "服務前減時(待退款)",
-    "服務後加時(待收款)",
-    "服務後減時(待退款)",
+    "加時(待收款)",
+    "減時(待退款)",
     "客訴(待退款)",
     "物損(待退款)",
 ]
 
-TIME_CHANGE_HELP = """
-<div class="info-strip">
-<b>加減時說明</b>
-<ul>
-<li><b>服務前加時：</b>服務前異動，補收加時費</li>
-<li><b>服務前減時：</b>服務前異動，退減時費</li>
-<li><b>服務後加時：</b>服務完成後補登加時收款</li>
-<li><b>服務後減時：</b>服務完成後補登減時退款</li>
-</ul>
-</div>
-"""
+SCENARIO_HELP = {
+    "僅開車馬費發票": """
+    <div class="info-strip">
+    <b>車馬費發票</b>
+    <ul>
+    <li>用途：僅開立車馬費發票</li>
+    <li>計算：專員人數 × $100</li>
+    <li>結果：寫入清潔異動工作表</li>
+    </ul>
+    </div>
+    """,
+    "異動費(待收款)": """
+    <div class="info-strip">
+    <b>異動費（待收款）</b>
+    <ul>
+    <li>用途：服務異動後需向客戶補收異動費</li>
+    <li>一般客：依原訂單總金額比例計算</li>
+    <li>儲值金客：依時數、人數與異動級距計算</li>
+    </ul>
+    </div>
+    """,
+    "異動費(待退款)": """
+    <div class="info-strip">
+    <b>異動費（待退款）</b>
+    <ul>
+    <li>用途：服務取消或減少後需退款</li>
+    <li>計算：原訂單金額 - 異動費</li>
+    <li>結果：產生待退款資料</li>
+    </ul>
+    </div>
+    """,
+    "異動平日轉週末(待收款)": """
+    <div class="info-strip">
+    <b>異動平日轉週末</b>
+    <ul>
+    <li>用途：原平日服務改為週末或例假日</li>
+    <li>計算：時數 × 人數 × $100 差額</li>
+    <li>結果：產生待收款資料</li>
+    </ul>
+    </div>
+    """,
+    "異動週末轉平日(待退款)": """
+    <div class="info-strip">
+    <b>異動週末轉平日</b>
+    <ul>
+    <li>用途：原週末或例假日服務改為平日</li>
+    <li>計算：時數 × 人數 × $100 差額</li>
+    <li>結果：產生待退款資料</li>
+    </ul>
+    </div>
+    """,
+    "加時(待收款)": """
+    <div class="info-strip">
+    <b>加時（待收款）</b>
+    <ul>
+    <li>服務前加時：服務前異動，補收加時費</li>
+    <li>服務後加時：服務完成後補登加時收款</li>
+    <li>計算：異動時數 × 異動人數 × 平日/假日費率</li>
+    </ul>
+    </div>
+    """,
+    "減時(待退款)": """
+    <div class="info-strip">
+    <b>減時（待退款）</b>
+    <ul>
+    <li>服務前減時：服務前異動，退減時費</li>
+    <li>服務後減時：服務完成後補登減時退款</li>
+    <li>計算：異動時數 × 異動人數 × 平日/假日費率</li>
+    </ul>
+    </div>
+    """,
+    "客訴(待退款)": """
+    <div class="info-strip">
+    <b>客訴退款</b>
+    <ul>
+    <li>用途：客訴補償退款</li>
+    <li>金額：人工輸入</li>
+    <li>結果：產生待退款資料</li>
+    </ul>
+    </div>
+    """,
+    "物損(待退款)": """
+    <div class="info-strip">
+    <b>物損退款</b>
+    <ul>
+    <li>用途：物損賠償退款</li>
+    <li>金額：人工輸入</li>
+    <li>結果：產生待退款資料</li>
+    </ul>
+    </div>
+    """,
+}
 
 
-def apply_time_change_label(row: dict, scenario: str) -> dict:
-    """依 V6 情境修正 J 欄文字，避免服務後加減時被顯示成「服務前」或「當天」。"""
-    label_map = {
-        "服務前加時(待收款)": ("服務前加時", "待收"),
-        "服務前減時(待退款)": ("服務前減時", "待退"),
-        "服務後加時(待收款)": ("服務後加時", "待收"),
-        "服務後減時(待退款)": ("服務後減時", "待退"),
-    }
-    if scenario not in label_map:
+def apply_time_change_label(row: dict, scenario: str, timing: str) -> dict:
+    """依加減時情境修正 J 欄文字。"""
+    if scenario == "加時(待收款)":
+        prefix = f"{timing}加時"
+    elif scenario == "減時(待退款)":
+        prefix = f"{timing}減時"
+    else:
         return row
 
-    prefix, action = label_map[scenario]
     j = str(row.get("J", ""))
     for old in ("服務前加時", "當天加時", "服務後加時"):
         j = j.replace(old, prefix)
@@ -2279,26 +2355,21 @@ def render_change_order_stage_a():
     c1, c2 = st.columns([1, 1.5])
     with c1:
         scenario = st.radio("情境", SCENARIO_OPTIONS, key="co_scenario")
+        st.markdown(SCENARIO_HELP.get(scenario, ""), unsafe_allow_html=True)
 
-        if scenario in (
-            "服務前加時(待收款)",
-            "服務前減時(待退款)",
-            "服務後加時(待收款)",
-            "服務後減時(待退款)",
-        ):
-            st.markdown(TIME_CHANGE_HELP, unsafe_allow_html=True)
-
-        is_time_change = scenario in (
-            "服務前加時(待收款)",
-            "服務前減時(待退款)",
-            "服務後加時(待收款)",
-            "服務後減時(待退款)",
-        )
+        is_time_change = scenario in ("加時(待收款)", "減時(待退款)")
         is_manual_refund = scenario in ("客訴(待退款)", "物損(待退款)")
 
+        time_change_timing = "服務前"
         change_hours = None
         change_person = None
         if is_time_change:
+            time_change_timing = st.radio(
+                "加減時發生時間",
+                ["服務前", "服務後"],
+                horizontal=True,
+                key="co_time_change_timing",
+            )
             change_hours = st.number_input(
                 "異動時數（小時）", min_value=0.0, step=0.5, value=1.0, key="co_time_hours"
             )
@@ -2338,7 +2409,7 @@ def render_change_order_stage_a():
                     calc_rows.append(row)
                     continue
 
-                if scenario in ("服務前加時(待收款)", "服務後加時(待收款)"):
+                if scenario == "加時(待收款)":
                     time_fee_info = change_order.calc_time_change_fee(
                         service_date_input, hours=change_hours, person=change_person
                     )
@@ -2346,11 +2417,11 @@ def render_change_order_stage_a():
                         order, time_fee_info, service_note, customer_type=customer_type,
                         service_date=service_date_input
                     )
-                    row = apply_time_change_label(row, scenario)
+                    row = apply_time_change_label(row, scenario, time_change_timing)
                     calc_rows.append(row)
                     continue
 
-                if scenario in ("服務前減時(待退款)", "服務後減時(待退款)"):
+                if scenario == "減時(待退款)":
                     time_fee_info = change_order.calc_time_change_fee(
                         service_date_input, hours=change_hours, person=change_person
                     )
@@ -2358,7 +2429,7 @@ def render_change_order_stage_a():
                         order, time_fee_info, service_note, customer_type=customer_type,
                         service_date=service_date_input
                     )
-                    row = apply_time_change_label(row, scenario)
+                    row = apply_time_change_label(row, scenario, time_change_timing)
                     calc_rows.append(row)
                     continue
 
