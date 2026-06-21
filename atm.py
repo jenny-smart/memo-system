@@ -704,7 +704,6 @@ def auto_match_bank_rows(
             # 需確認候選：
             # 1) 候選列 M 欄是日期+時間，且等於銀行 B 欄
             # 2) 銀行 F 欄與候選 K 欄姓名相近
-            # 3) 候選 K 欄姓名已出現在上方已對帳列表
             if not matches and allow_review_prefill:
                 review_matches = []
                 for c in amount_candidates:
@@ -713,8 +712,6 @@ def auto_match_bank_rows(
                         reasons.append("M欄日期時間=B欄")
                     if _similar_text(note, c.get("name", "")):
                         reasons.append("F欄與K欄姓名相近")
-                    if _compact_text(c.get("name", "")) in matched_names:
-                        reasons.append("K欄姓名曾出現在上方已對帳列表")
                     if reasons:
                         cc = dict(c)
                         cc["review_reasons"] = reasons
@@ -730,6 +727,22 @@ def auto_match_bank_rows(
 
             if len(matches) == 1:
                 c = matches[0]
+
+                evidence_ok = (
+                    str(match_type).startswith("末碼+金額")
+                    or str(match_type).startswith("備註姓名+金額")
+                    or "F欄與K欄姓名相近" in str(match_type)
+                    or "M欄日期時間=B欄" in str(match_type)
+                    or str(match_type).startswith("疑似拆單")
+                )
+                if not evidence_ok:
+                    text = f"待人工確認：同金額候選 {c.get('order_no') or '-'} {c.get('name')}，但缺少末碼/姓名/時間依據"
+                    result["unmatched"] += 1
+                    result["failed"] += 1
+                    result["errors"].append(f"第{idx}列：{text}")
+                    log(f"❌ 第{idx}列：{text}")
+                    continue
+
                 summary = _format_match_text(
                     c["year_month"], c["service_type"], c["fee_type"], c["order_no"], c["name"]
                 )
