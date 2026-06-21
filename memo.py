@@ -1024,17 +1024,26 @@ def submit_update(session, form_info, phone, new_notice):
     return resp
 
 
-def verify_update(session, edit_url, phone, expected_notice):
+def verify_update(session, edit_url, phone, expected_notice, order_no=None):
     form = parse_edit_page(session, edit_url, phone)
 
     actual_notice = str(form.get("notice", "")).strip()
-    actual_progress = str(form.get("progress", "")).strip()
 
     norm_expected = normalize_text(expected_notice)
     norm_actual = normalize_text(actual_notice)
 
     notice_ok = norm_actual == norm_expected or (norm_expected[:20] and norm_expected[:20] in norm_actual)
-    progress_ok = actual_progress == "1"
+
+    if order_no:
+        # 處理狀態（progress）改用「重新查詢列表頁」來判斷，因為明細頁的 <select> 解析
+        # 目前不可靠（找不到 selected 屬性時無法判斷目前選中哪個選項）；
+        # 列表頁文字判斷是可靠的（每一列只會印出「目前」這一個狀態文字）。
+        rows = search_orders_by_order_no(session, order_no)
+        row = next((x for x in rows if x.get("order_no") == order_no), None)
+        progress_ok = bool(row) and row.get("status_code") == "1"
+    else:
+        actual_progress = str(form.get("progress", "")).strip()
+        progress_ok = actual_progress == "1"
 
     return notice_ok and progress_ok, form
 
@@ -1120,7 +1129,7 @@ def get_target_and_source_for_order(session, target: Dict, log) -> Dict:
     }
 
 
-def execute_target_order(session, target: Dict, source_type: str, source_value: str, log, log_ws):
+def execute_target_order(session, target: Dict, source_type: str, source_value: str, log, log_ws, override_notice: Optional[str] = None):
     CURRENT_ROW_LOGS.clear()
 
     target_order_no = target.get("order_no", "")
@@ -1134,6 +1143,11 @@ def execute_target_order(session, target: Dict, source_type: str, source_value: 
     source = meta["source"]
     source_notice = meta["source_notice"]
 
+    # 新成單（找不到歷史來源訂單）時，如果使用者有自己編輯過提醒文字，優先採用使用者輸入的內容，
+    # 不強制使用寫死的 DEFAULT_NEW_ORDER_NOTICE。
+    if source.get("order_no") == "（新成單）" and override_notice is not None and override_notice.strip():
+        source_notice = override_notice.strip()
+
     log(f"\n===== 處理訂單 {target_order_no} =====")
     log(f"目前訂單: {target_order_no}")
     log(f"客戶: {target_name}")
@@ -1145,7 +1159,7 @@ def execute_target_order(session, target: Dict, source_type: str, source_value: 
     submit_update(session, target_form, target_phone, source_notice)
     time.sleep(SLEEP_SECONDS)
 
-    ok, verified_form = verify_update(session, target["edit_url"], target_phone, source_notice)
+    ok, verified_form = verify_update(session, target["edit_url"], target_phone, source_notice, order_no=target_order_no)
     if not ok:
         reason_text = f"❌ 處理失敗 {target_order_no}：更新後驗證失敗"
         log(reason_text)
@@ -1206,7 +1220,7 @@ def process_single_case(session, order, name, phone, addr, date, log):
     submit_update(session, target_form, target_phone, source_notice)
     time.sleep(SLEEP_SECONDS)
 
-    ok, _ = verify_update(session, target["edit_url"], target_phone, source_notice)
+    ok, _ = verify_update(session, target["edit_url"], target_phone, source_notice, order_no=order)
     if ok:
         log(f"✅ 成功：已回填 {order}")
         return {
@@ -1567,11 +1581,12 @@ def main(row_spec="2", force=False, ui_logger=None, session=None):
     return result
 
 
-def main_by_selected_order_ids(order_ids, ui_logger=None, session=None):
+def main_by_selected_order_ids(order_ids, ui_logger=None, session=None, custom_notices: Optional[Dict[str, str]] = None):
     CURRENT_ROW_LOGS.clear()
     log = make_logger(ui_logger)
     log_ws = get_log_ws()
     result = blank_result()
+    custom_notices = custom_notices or {}
 
     if not order_ids:
         msg = "❌ 處理失敗：未提供任何訂單"
@@ -1605,6 +1620,7 @@ def main_by_selected_order_ids(order_ids, ui_logger=None, session=None):
                 source_value=source_value,
                 log=log,
                 log_ws=log_ws,
+                override_notice=custom_notices.get(order_id),
             )
 
             result["processed"] += 1
