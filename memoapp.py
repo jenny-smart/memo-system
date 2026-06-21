@@ -1303,7 +1303,7 @@ def render_lemon_ren_section():
 def render_atm_section():
     atm_mode = st.radio(
         "",
-        ["對帳執行", "待付款清單查詢（/ATM-list）"],
+        ["對帳執行", "待付款清單查詢（/ATM-list）", "自動配對銀行明細"],
         horizontal=True,
         label_visibility="collapsed",
         key="atm_mode",
@@ -1311,8 +1311,10 @@ def render_atm_section():
 
     if atm_mode == "對帳執行":
         render_atm_reconcile_mode()
-    else:
+    elif atm_mode == "待付款清單查詢（/ATM-list）":
         render_atm_list_mode()
+    else:
+        render_atm_auto_match_mode()
 
 
 def render_atm_reconcile_mode():
@@ -1411,6 +1413,89 @@ def render_atm_reconcile_mode():
                 "errors": [str(e)],
             }
             render_atm_result(st.session_state.atm_result, atm_result_container)
+
+
+def render_atm_auto_match_mode():
+    step("3", "自動配對銀行明細")
+
+    st.markdown(
+        '<div class="info-strip">A-F 欄貼銀行明細、I-L 欄由「待付款清單查詢」貼入、M 欄填客人告知末碼後，'
+        '按下方按鈕會自動用「金額＋末碼」優先配對；若客人有寫匯款備註、沒有末碼，則改用「金額＋姓名/備註」配對。'
+        '成功配對會寫回 G 欄摘要與 I~O 欄。</div>',
+        unsafe_allow_html=True
+    )
+    st.markdown(
+        '<div class="warn-strip">⚠️ 唯一候選才會自動配對；多筆同金額或找不到時，只會在 G 欄標示「待人工確認」或「多筆候選」。</div>',
+        unsafe_allow_html=True
+    )
+
+    c1, c2, c3, c4 = st.columns([1, 1, 1, 1])
+
+    with c1:
+        region = st.selectbox("地區", ["台北", "台中"], key="atm_match_region")
+
+    with c2:
+        default_service_type = st.text_input("預設服務類別", value="清潔", key="atm_match_service_type")
+
+    with c3:
+        default_fee_type = st.text_input("預設費用類別", value="服務費用", key="atm_match_fee_type")
+
+    with c4:
+        st.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
+        overwrite_existing = st.checkbox("覆蓋已配對列", value=False, key="atm_match_overwrite")
+
+    execute_btn = st.button(
+        "🚀 自動配對",
+        use_container_width=True,
+        disabled=not st.session_state.credentials_ready,
+    )
+
+    with st.expander("執行 LOG", expanded=True):
+        log_box_local = st.empty()
+        log_box_local.code(
+            "\n".join(st.session_state.logs[-3000:])
+            if st.session_state.logs
+            else "尚未執行"
+        )
+
+    def atm_match_ui_log(msg):
+        st.session_state.logs.append(str(msg))
+        try:
+            log_box_local.code("\n".join(st.session_state.logs[-3000:]))
+        except Exception:
+            pass
+
+    result_container_local = st.container()
+    if st.session_state.atm_match_result is not None:
+        render_atm_result(st.session_state.atm_match_result, result_container_local)
+
+    if execute_btn:
+        try:
+            st.session_state.logs = []
+            st.session_state.atm_match_result = None
+            atm_match_ui_log(f"===== 開始自動配對銀行明細（{region}）=====")
+
+            with st.spinner("配對中，請稍候…"):
+                result = atm.auto_match_bank_rows(
+                    region=region,
+                    overwrite_existing=overwrite_existing,
+                    default_service_type=default_service_type.strip() or "清潔",
+                    default_fee_type=default_fee_type.strip() or "服務費用",
+                    ui_logger=atm_match_ui_log,
+                )
+
+            atm_match_ui_log("===== 自動配對完成 =====")
+            st.session_state.atm_match_result = result
+            render_atm_result(result, result_container_local)
+
+        except Exception as e:
+            atm_match_ui_log(f"❌ 自動配對失敗：{e}")
+            st.session_state.atm_match_result = {
+                **DEFAULT_RESULT,
+                "failed": 1,
+                "errors": [str(e)],
+            }
+            render_atm_result(st.session_state.atm_match_result, result_container_local)
 
 
 def render_atm_list_mode():
