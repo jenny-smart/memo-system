@@ -78,6 +78,14 @@ RETRY_BACKOFF = 1.2
 
 CURRENT_ROW_LOGS: List[str] = []
 
+# 新成單（地址完全沒有歷史訂單）時，自動帶入的固定提醒文字
+DEFAULT_NEW_ORDER_NOTICE = (
+    "請現場跟客戶溝通清潔優先順序，並請回報以下內容\n"
+    "＊工作項目＋時間分配\n"
+    "＊特別注意事項\n"
+    "＊服務小貼心"
+)
+
 
 def make_logger(ui_logger: Optional[Callable[[str], None]] = None):
     def _log(msg: str):
@@ -664,31 +672,20 @@ def search_by_conditions(session, date_mode: str, date_start: str, date_end: str
 
 
 def parse_select_value(select_el):
-    name = select_el.get("name", "")
-    text = select_el.get_text(" ", strip=True)
-
+    """
+    解析 <select> 目前選中的值。
+    注意：原本的 fallback（用整個 select 的文字內容比對「已完成/已處理/未處理」）
+    是不準確的，因為一個 <select> 通常會把所有選項文字都印在 DOM 裡，
+    並非只有「目前選中」的那一個，這樣比對永遠會先命中「已完成」。
+    這裡保留 option[selected] 的判斷（如果後台確實有輸出 selected 屬性），
+    其餘狀況一律回傳空字串，交由呼叫端（列表頁解析結果）決定真正的狀態，
+    不要再用這個 fallback 文字比對法。
+    """
     selected = select_el.select_one("option[selected]")
     if selected is not None:
         return selected.get("value", "")
 
-    if name in ("progress", "progress_status"):
-        if "已完成" in text:
-            return "2"
-        if "已處理" in text:
-            return "1"
-        if "未處理" in text:
-            return "0"
-
-    if name == "purchase_status":
-        if "已退款" in text:
-            return "3"
-        if "取消訂單" in text:
-            return "2"
-        if "已付款" in text:
-            return "1"
-        if "待付款" in text or "未付款" in text:
-            return "0"
-
+    # 找不到 selected 屬性時，不要用全文字比對猜測（不可靠），直接回傳空字串。
     return ""
 
 
@@ -728,10 +725,6 @@ def parse_edit_page(session, edit_url, phone=""):
             fields[name] = el.text or ""
         elif tag == "select":
             fields[name] = parse_select_value(el)
-            if name in ("progress", "progress_status"):
-                print("===== DEBUG SELECT HTML =====")
-                print(el.prettify())
-                print("===== parsed value =====", fields[name])
         else:
             input_type = (el.get("type") or "text").lower()
             if input_type in ("checkbox", "radio"):
@@ -816,9 +809,19 @@ def enrich_item_from_detail(session, item: Dict, phone="") -> Dict:
     item["address"] = detail.get("address", "") or item.get("address", "")
     item["purchase_status_name"] = detail.get("purchase_status_name", "") or item.get("purchase_status_name", "")
     item["purchase_status"] = detail.get("purchase_status", "") or item.get("purchase_status", "")
-    item["progress"] = detail.get("progress", "") or item.get("progress", "")
-    item["status_code"] = detail.get("progress", "") or item.get("status_code", "")
-    item["status"] = detail.get("status_name", "") or item.get("status", "")
+
+    # progress / status_code / status：以列表頁解析結果為準。
+    # 列表頁文字判斷（parse_purchase_row_text）是可靠的，因為列表頁每一列只會印出
+    # 「目前」這一個狀態文字；明細頁的 <select> 解析（parse_select_value）目前不可靠，
+    # 找不到 selected 屬性時只能回傳空字串，所以這裡只在列表頁原本沒有值時才採用明細頁的值，
+    # 絕不能讓明細頁覆蓋掉列表頁已經判斷正確的狀態。
+    if not item.get("progress"):
+        item["progress"] = detail.get("progress", "")
+    if not item.get("status_code"):
+        item["status_code"] = detail.get("progress", "")
+    if not item.get("status"):
+        item["status"] = detail.get("status_name", "")
+
     item["notice"] = detail.get("notice", "") or item.get("notice", "")
     item["_detail"] = detail
     return item
@@ -843,6 +846,22 @@ def enrich_items_from_detail(session, items: List[Dict], phone="", log=None, con
             log(f"[明細補抓進度] {idx}/{total}")
 
     return result
+
+
+def has_any_same_address_history(current_item: Dict, history_items: List[Dict]) -> bool:
+    """
+    判斷這個地址是不是完全沒有出現過任何歷史訂單（不論付款/處理狀態、不論備註是否為空）。
+    用來分辨「真的是新成單」跟「有歷史單但條件不符合自動回填」這兩種情況。
+    """
+    current_order_no = current_item.get("order_no", "")
+    current_addr = current_item.get("address", "")
+
+    for x in history_items:
+        if x.get("order_no") == current_order_no:
+            continue
+        if same_address(x.get("address", ""), current_addr):
+            return True
+    return False
 
 
 def find_best_source_order(current_item: Dict, history_items: List[Dict]) -> Optional[Dict]:
@@ -891,6 +910,26 @@ def find_best_source_order(current_item: Dict, history_items: List[Dict]) -> Opt
 def build_preview_row(target: Dict, history_items: List[Dict]) -> Dict:
     source = find_best_source_order(target, history_items)
 
+    if not source and not has_any_same_address_history(target, history_items):
+        # 這個地址完全沒有歷史訂單 → 視為新成單，自動帶入固定提醒文字
+        return {
+            "order_id": target.get("order_no", ""),
+            "customer_name": target.get("name", ""),
+            "phone": target.get("phone", ""),
+            "address": target.get("address", ""),
+            "service_date": display_service_date(target),
+            "purchase_status_name": target.get("purchase_status_name", ""),
+            "status_name": target.get("status", ""),
+            "source_order_id": "",
+            "source_service_date": "",
+            "source_purchase_status_name": "",
+            "source_status_name": "",
+            "source_notice_exists": True,
+            "source_notice_preview": "（新成單，將帶入固定提醒文字）",
+            "can_autofill": True,
+            "is_new_order": True,
+        }
+
     return {
         "order_id": target.get("order_no", ""),
         "customer_name": target.get("name", ""),
@@ -906,6 +945,7 @@ def build_preview_row(target: Dict, history_items: List[Dict]) -> Dict:
         "source_notice_exists": bool(str(source.get("notice", "")).strip()) if source else False,
         "source_notice_preview": str(source.get("notice", "")).strip()[:80] if source else "",
         "can_autofill": bool(source),
+        "is_new_order": False,
     }
 
 
@@ -1011,7 +1051,24 @@ def get_target_and_source_for_order(session, target: Dict, log) -> Dict:
         }
 
     source = find_best_source_order(target_item, items)
+
     if not source:
+        if not has_any_same_address_history(target_item, items):
+            log(f"[新成單] {target_order_no}：此地址無歷史訂單，使用固定提醒文字")
+            return {
+                "target_form": target_form,
+                "target_phone": target_phone,
+                "target_name": target_name,
+                "target_addr": target_addr,
+                "target_service_date": target_service_date,
+                "source": {
+                    "order_no": "（新成單）",
+                    "purchase_status_name": "",
+                    "status": "",
+                    "service_date": "",
+                },
+                "source_notice": DEFAULT_NEW_ORDER_NOTICE,
+            }
         raise RuntimeError(f"❌ 處理失敗 {target_order_no}：找不到同地址＋已付款＋已處理＋有備註的最近來源單")
 
     source_notice = str(source.get("notice", "")).strip()
