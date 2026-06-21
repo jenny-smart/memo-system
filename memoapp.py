@@ -723,23 +723,97 @@ elif not st.session_state.is_logged_in:
 st.markdown("---")
 
 # ============================================================
-# Step 2：選擇功能（排班相關功能放一起，ATM 對帳放最後）
+# Step 2：選擇功能
 # ============================================================
 
 step("2", "選擇功能")
 
-app_section = st.selectbox(
+main_section = st.selectbox(
     "功能",
     [
-        "Memo 自動回填",
-        "排班勾選（匯入檔）",
-        "檸檬人空檔勾選",
-        "清空排班",
-        "ATM 對帳",
-        "清潔異動",
+        "📝 訂單客服備註",
+        "📅 排班功能",
+        "💳 ATM 對帳",
+        "🔄 服務異動",
     ],
     label_visibility="collapsed",
+    key="main_section",
 )
+
+MAIN_SECTION_HELP = {
+    "📝 訂單客服備註": """
+    <div class="info-strip">
+        <b>功能說明：</b>自動尋找同地址的歷史訂單客服備註，回填到目前未處理訂單。<br>
+        <b>適用情境：</b>舊客回購、定期客戶、新成單客服整理。<br>
+        <b>建議流程：</b>選擇查詢方式 → 查詢 / 預覽 → 勾選要處理的訂單 → 執行回填。
+    </div>
+    """,
+    "📅 排班功能": """
+    <div class="info-strip">
+        <b>功能說明：</b>排班相關作業整合入口，包含排班匯入、檸檬人空檔查詢、清空排班。<br>
+        <b>適用情境：</b>月排班、臨時派工、補人力、取消案件、班表重整。<br>
+        <b>下一步：</b>請在下方選擇要使用的排班子功能。
+    </div>
+    """,
+    "💳 ATM 對帳": """
+    <div class="info-strip">
+        <b>功能說明：</b>處理 ATM 待付款清單、銀行明細配對、付款狀態更新、開立發票與發送確認信。<br>
+        <b>適用情境：</b>每日財務對帳、補款確認。<br>
+        <b>建議流程：</b>待付款清單查詢 → 配對銀行明細 → 更新系統對帳。
+    </div>
+    """,
+    "🔄 服務異動": """
+    <div class="info-strip">
+        <b>功能說明：</b>處理改期、取消、異動費、車馬費、退款、客訴退款與物損退款。<br>
+        <b>適用情境：</b>客服異動處理、財務收退款同步。<br>
+        <b>建議流程：</b>階段 A 查詢試算並寫入工作表 → 階段 B 讀取待處理資料並回填後台。
+    </div>
+    """,
+}
+
+st.markdown(MAIN_SECTION_HELP.get(main_section, ""), unsafe_allow_html=True)
+
+shift_sub_section = None
+
+if main_section == "📅 排班功能":
+    step("3", "選擇排班子功能")
+
+    shift_sub_section = st.radio(
+        "排班子功能",
+        [
+            "排班匯入",
+            "檸檬人空檔查詢",
+            "清空排班",
+        ],
+        horizontal=True,
+        label_visibility="collapsed",
+        key="shift_sub_section",
+    )
+
+    SHIFT_SUB_HELP = {
+        "排班匯入": """
+        <div class="info-strip">
+            <b>排班匯入：</b>上傳 Excel / CSV 批次更新專員班表。<br>
+            <b>下一步：</b>上傳檔案 → Dry Run 預覽 → 確認合併結果 → 正式儲存。<br>
+            <b>提醒：</b>正式儲存會直接改動後台排班資料。
+        </div>
+        """,
+        "檸檬人空檔查詢": """
+        <div class="info-strip">
+            <b>檸檬人空檔查詢：</b>依指定日期與班別，自動檢查檸檬人 1～N 是否有空檔。<br>
+            <b>下一步：</b>選擇日期與類型 → 尋找空檔 → 確認候選檸檬人 → 送出勾班。
+        </div>
+        """,
+        "清空排班": """
+        <div class="warn-strip">
+            <b>清空排班：</b>批次移除指定人員、日期區間內的既有班表。<br>
+            <b>下一步：</b>選擇清空模式 → 輸入人員與期間 / 來源清單 → 確認後執行。<br>
+            <b>提醒：</b>此功能會直接更新後台排班，請確認人員與日期後再執行。
+        </div>
+        """,
+    }
+
+    st.markdown(SHIFT_SUB_HELP.get(shift_sub_section, ""), unsafe_allow_html=True)
 
 st.markdown("---")
 
@@ -750,6 +824,11 @@ st.markdown("---")
 
 def render_memo_section():
     step("3", "設定查詢條件")
+
+    st.markdown(
+        '<div class="info-strip"><b>下一步：</b>請選擇要用 Google Sheet、電話或搜尋條件來找訂單。查詢後會先顯示預覽，確認勾選後才會回填客服備註。</div>',
+        unsafe_allow_html=True
+    )
 
     mode = st.radio(
         "",
@@ -775,6 +854,13 @@ def render_memo_section():
     sheet_summary_btn = False
     search_btn = False
     execute_btn = False
+
+    MEMO_MODE_HELP = {
+        "By Google Sheet": '<div class="info-strip"><b>By Google Sheet：</b>依 Sheet 列號處理，適合每日批次回填。可指定列號，也可依剩餘未處理筆數執行。</div>',
+        "By 電話": '<div class="info-strip"><b>By 電話：</b>輸入一支或多支電話，系統會找出該客戶目前未處理訂單，並比對最近可參照來源訂單。</div>',
+        "By 搜尋條件": '<div class="info-strip"><b>By 搜尋條件：</b>依服務日期 / 購買日期與付款狀態批次搜尋未處理訂單，適合每日整理。</div>',
+    }
+    st.markdown(MEMO_MODE_HELP.get(mode, ""), unsafe_allow_html=True)
 
     if mode == "By Google Sheet":
         sheet_run_mode = st.radio(
@@ -1304,6 +1390,8 @@ def render_lemon_ren_section():
 # ============================================================
 
 def render_atm_section():
+    step("3", "選擇 ATM 對帳步驟")
+
     atm_mode = st.radio(
         "",
         ["待付款清單查詢（/ATM-list）", "配對銀行明細", "更新系統對帳"],
@@ -1311,6 +1399,13 @@ def render_atm_section():
         label_visibility="collapsed",
         key="atm_mode",
     )
+
+    ATM_MODE_HELP = {
+        "待付款清單查詢（/ATM-list）": '<div class="info-strip"><b>步驟 1：</b>從後台查詢 ATM 待付款訂單，整理後貼到 ATM 工作表 I～L 欄。</div>',
+        "配對銀行明細": '<div class="info-strip"><b>步驟 2：</b>用金額、末碼、姓名 / 備註或時間自動配對銀行明細與待付款訂單。</div>',
+        "更新系統對帳": '<div class="warn-strip"><b>步驟 3：</b>確認配對結果後，更新後台付款狀態、開立發票、發送確認信，並回寫 Sheet。此步驟會直接更新系統。</div>',
+    }
+    st.markdown(ATM_MODE_HELP.get(atm_mode, ""), unsafe_allow_html=True)
 
     if atm_mode.startswith("待付款清單查詢"):
         render_atm_list_mode()
@@ -1428,7 +1523,7 @@ def render_atm_auto_match_mode():
         unsafe_allow_html=True
     )
     st.markdown(
-        '<div class="warn-strip">⚠️ 不可只靠金額唯一自動配對；必須有末碼、姓名/備註或時間相符依據；若符合需確認、非訂單收入或疑似拆單規則（但不能只靠金額或上方曾出現同名），會先預填 I~O、P 欄台北時間，並在 T 欄標示狀態；多筆或找不到時只顯示 LOG，不會修改 G 欄。</div>',
+        '<div class="warn-strip">⚠️ 不可只靠金額唯一自動配對；必須有末碼、姓名/備註或時間相符依據；若符合需確認、非訂單收入或疑似拆單規則，會先預填 I~O、P 欄台北時間，並在 T 欄標示狀態；多筆或找不到時只顯示 LOG，不會修改 G 欄。</div>',
         unsafe_allow_html=True
     )
 
@@ -1453,7 +1548,7 @@ def render_atm_auto_match_mode():
         "允許需確認候選預填",
         value=True,
         key="atm_match_allow_review_prefill",
-        help="符合 M欄日期時間=B欄、F欄與K欄姓名相近、或F欄與K欄姓名相近或 M欄日期時間等於B欄時，會先預填 I~O 並在 LOG 標示需確認。"
+        help="符合 M欄日期時間=B欄、F欄與K欄姓名相近、或K欄姓名已在上方對帳列表出現時，會先預填 I~O 並在 LOG 標示需確認。"
     )
 
     execute_btn = st.button(
@@ -1890,6 +1985,8 @@ def render_clear_shift_section():
 # ============================================================
 
 def render_change_order_section():
+    step("3", "選擇服務異動步驟")
+
     co_mode = st.radio(
         "",
         ["階段 A：查詢試算（寫入清潔異動工作表）", "階段 B：回填系統（讀工作表寫回後台）"],
@@ -1897,6 +1994,12 @@ def render_change_order_section():
         label_visibility="collapsed",
         key="change_order_mode",
     )
+
+    CHANGE_ORDER_MODE_HELP = {
+        "階段 A：查詢試算（寫入清潔異動工作表）": '<div class="info-strip"><b>階段 A：</b>查詢訂單並試算車馬費、異動費或退款金額，確認後寫入清潔異動工作表。</div>',
+        "階段 B：回填系統（讀工作表寫回後台）": '<div class="warn-strip"><b>階段 B：</b>讀取清潔異動工作表待處理列，將收款 / 退款 / 發票資料同步回後台。執行前請確認工作表資料正確。</div>',
+    }
+    st.markdown(CHANGE_ORDER_MODE_HELP.get(co_mode, ""), unsafe_allow_html=True)
 
     if co_mode.startswith("階段 A"):
         render_change_order_stage_a()
@@ -2327,15 +2430,19 @@ def render_change_order_stage_b():
 # 依目前選擇的功能渲染對應區塊
 # ============================================================
 
-if app_section == "Memo 自動回填":
+if main_section == "📝 訂單客服備註":
     render_memo_section()
-elif app_section == "排班勾選（匯入檔）":
-    render_shift_import_section()
-elif app_section == "檸檬人空檔勾選":
-    render_lemon_ren_section()
-elif app_section == "ATM 對帳":
+
+elif main_section == "📅 排班功能":
+    if shift_sub_section == "排班匯入":
+        render_shift_import_section()
+    elif shift_sub_section == "檸檬人空檔查詢":
+        render_lemon_ren_section()
+    else:
+        render_clear_shift_section()
+
+elif main_section == "💳 ATM 對帳":
     render_atm_section()
-elif app_section == "清潔異動":
+
+elif main_section == "🔄 服務異動":
     render_change_order_section()
-else:
-    render_clear_shift_section()
