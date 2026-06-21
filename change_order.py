@@ -15,6 +15,7 @@ memo.py 用 gspread + Service Account。
 import re
 import math
 from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 from typing import Optional
 
 import requests
@@ -48,6 +49,33 @@ TAIWAN_PUBLIC_HOLIDAYS = {
     date(2026, 12, 25),
 }
 
+
+
+
+def _today_taipei_str(today: date = None) -> str:
+    """回傳台北時區登記日期字串，避免 Streamlit 主機使用 UTC 導致日期少一天。"""
+    if today:
+        return today.strftime("%Y/%m/%d")
+    return datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y/%m/%d")
+
+
+def _money_int(value, default: int = 0) -> int:
+    try:
+        return int(round(float(value or 0)))
+    except (TypeError, ValueError):
+        return default
+
+
+def get_travel_fee(order: dict) -> int:
+    """車馬費。優先使用訂單付款資訊解析出的金額；沒有資料時回傳 0。"""
+    return _money_int((order or {}).get("travel_fee", 0))
+
+
+def get_service_amount(order: dict) -> int:
+    """服務費基礎 = 總金額 - 車馬費；退款相關比例均以此為基礎。"""
+    total = _money_int((order or {}).get("total", 0))
+    travel_fee = get_travel_fee(order)
+    return max(total - travel_fee, 0)
 
 # ============================================================
 # Google Sheet 連線（比照 memo.py 用 service account）
@@ -287,6 +315,9 @@ def _parse_order_row(row) -> dict:
     total_match = re.search(r"總金額[：:]\s*([\d,]+)", pay_cell_text)
     total = int(total_match.group(1).replace(",", "")) if total_match else 0
 
+    travel_fee_match = re.search(r"車馬費[：:]\s*([\d,]+)", pay_cell_text)
+    travel_fee = int(travel_fee_match.group(1).replace(",", "")) if travel_fee_match else 0
+
     payway = "儲值金" if "儲值金" in pay_cell_text else "非儲值金"
 
     invoice_match = re.search(r"發票[：:]\s*([A-Z0-9]+)", pay_cell_text)
@@ -303,6 +334,8 @@ def _parse_order_row(row) -> dict:
         "service_hours": _parse_period_hours(period_text),
         "cleaner_count": cleaner_count,
         "total": total,
+        "travel_fee": travel_fee,
+        "service_amount": max(total - travel_fee, 0),
         "payway": payway,           # 儲值金 / 非儲值金
         "invoice_no": invoice_no,
         "carrier_type": carrier_type,  # 二聯式 / 三聯式
@@ -539,8 +572,8 @@ def calc_change_fee(order: dict, service_date: date, change_person: int = None,
 
 
 def calc_refund_amount(order: dict, change_fee: int) -> int:
-    """應退款 = 原服務總金額 − 異動費"""
-    return max(order.get("total", 0) - change_fee, 0)
+    """應退款 = 服務費基礎（總金額 − 車馬費）− 異動費。車馬費不列入退款比例計算。"""
+    return max(get_service_amount(order) - _money_int(change_fee), 0)
 
 
 # ============================================================
@@ -553,7 +586,7 @@ def build_fare_row(order: dict, service_date: date = None, today: date = None) -
     i_value = _format_service_datetime(service_date, order.get("period_text", ""))
     return {
         "A": "清潔", "B": "待處理發票", "C": TYPE_FARE,
-        "E": (today or date.today()).strftime("%Y/%m/%d"),
+        "E": _today_taipei_str(today),
         "F": "", "G": order["order_no"], "H": order["customer_name"],
         "I": i_value, "J": f"車馬費 ${fare}",
         "_calc_amount": fare,
@@ -568,7 +601,7 @@ def build_charge_row(order: dict, change_fee_info: dict, service_note: str,
     j_value = _format_change_fee_j(order, change_fee_info)
     return {
         "A": "清潔", "B": STATUS_PENDING_CHARGE, "C": TYPE_CHARGE,
-        "E": (today or date.today()).strftime("%Y/%m/%d"),
+        "E": _today_taipei_str(today),
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value, "J": j_value,
         "K": service_note or "",
@@ -587,7 +620,7 @@ def build_refund_row(order: dict, change_fee_info: dict, service_note: str,
     j_value = _format_change_fee_j(order, change_fee_info)
     return {
         "A": "清潔", "B": STATUS_PENDING_REFUND, "C": TYPE_REFUND,
-        "E": (today or date.today()).strftime("%Y/%m/%d"),
+        "E": _today_taipei_str(today),
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value,
         "J": j_value,
@@ -597,6 +630,10 @@ def build_refund_row(order: dict, change_fee_info: dict, service_note: str,
         "X": order.get("invoice_no", ""),
         "Y": "三聯" if order.get("carrier_type") == "三聯式" else "二聯",
         "_calc_amount": refund_amount,
+        "_refund_amount": refund_amount,
+        "_change_fee": change_fee_info.get("change_fee", 0),
+        "_travel_fee": get_travel_fee(order),
+        "_service_amount": get_service_amount(order),
         "_calc_note": change_fee_info["calc_note"],
     }
 
@@ -659,7 +696,7 @@ def build_addtime_row(order: dict, time_fee_info: dict, service_note: str,
     j_value = _format_people_hours_fee_j(f"{timing}加時", "待收", time_fee_info)
     return {
         "A": "清潔", "B": STATUS_PENDING_CHARGE, "C": TYPE_CHARGE,
-        "E": (today or date.today()).strftime("%Y/%m/%d"),
+        "E": _today_taipei_str(today),
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value, "J": j_value,
         "K": service_note or "",
@@ -678,7 +715,7 @@ def build_reducetime_row(order: dict, time_fee_info: dict, service_note: str,
     j_value = _format_people_hours_fee_j(f"{timing}減時", "待退", time_fee_info)
     return {
         "A": "清潔", "B": STATUS_PENDING_REFUND, "C": TYPE_REFUND,
-        "E": (today or date.today()).strftime("%Y/%m/%d"),
+        "E": _today_taipei_str(today),
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value,
         "J": j_value,
@@ -700,7 +737,7 @@ def build_weekday_to_weekend_row(order: dict, time_fee_info: dict, service_note:
     j_value = _format_people_hours_fee_j("異動平日轉週末", "待收", time_fee_info)
     return {
         "A": "清潔", "B": STATUS_PENDING_CHARGE, "C": TYPE_CHARGE,
-        "E": (today or date.today()).strftime("%Y/%m/%d"),
+        "E": _today_taipei_str(today),
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value, "J": j_value,
         "K": service_note or "",
@@ -718,7 +755,7 @@ def build_weekend_to_weekday_row(order: dict, time_fee_info: dict, service_note:
     j_value = _format_people_hours_fee_j("異動週末轉平日", "待退", time_fee_info)
     return {
         "A": "清潔", "B": STATUS_PENDING_REFUND, "C": TYPE_REFUND,
-        "E": (today or date.today()).strftime("%Y/%m/%d"),
+        "E": _today_taipei_str(today),
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value, "J": j_value,
         "K": service_note or "",
@@ -752,7 +789,7 @@ def build_manual_refund_row(order: dict, amount, refund_type_label: str, service
     )
     return {
         "A": "清潔", "B": STATUS_PENDING_REFUND, "C": refund_type_label,
-        "E": (today or date.today()).strftime("%Y/%m/%d"),
+        "E": _today_taipei_str(today),
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value,
         "J": j_value,
