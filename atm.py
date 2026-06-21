@@ -561,7 +561,7 @@ def auto_match_bank_rows(
     1. 金額必須相同
     2. 優先用 F 欄數字備註比對 M 欄末碼
     3. 沒有可用末碼時，用 F 欄文字備註比對 K 欄姓名
-    4. 唯一候選才自動寫回；多筆/找不到只寫 LOG，不改 G 欄
+    4. 不可只靠金額唯一就自動配對；必須有末碼、姓名/備註、或時間相符依據；多筆/找不到只寫 LOG，不改 G 欄
 
     成功配對會寫回銀行列：
     I=服務月份、J=訂單編號、K=姓名、L=金額、M=末碼、N=服務類別、O=費用類別
@@ -690,9 +690,6 @@ def auto_match_bank_rows(
             elif len(name_matches) > 1:
                 matches = name_matches
                 match_type = "備註姓名+金額"
-            elif len(amount_candidates) == 1:
-                matches = amount_candidates
-                match_type = "唯一金額"
             elif len(split_candidates) == 1:
                 matches = [dict(split_candidates[0], split_reason="疑似拆單")]
                 match_type = "疑似拆單"
@@ -779,10 +776,14 @@ def auto_match_bank_rows(
                 # 只要已經移到上方指定對帳列，不論是否需確認/非訂單/疑似拆單，
                 # 原下方待配對列表都要清空，避免同一筆留在列表中重複配對。
                 if source_row and source_row != idx:
+                    # 清空下方待配對列的值，但保留 I/N/O 的下拉選單格式。
+                    # 先把目前目標列的 I/N/O 驗證複製回來源列，再清空值。
+                    _copy_data_validation(ws, idx, source_row, [COL_MONTH, COL_SERVICE_TYPE, COL_FEE_TYPE])
                     memo.with_retry(ws.update, f"I{source_row}:O{source_row}", [["", "", "", "", "", "", ""]], value_input_option="RAW")
+                    _copy_data_validation(ws, idx, source_row, [COL_MONTH, COL_SERVICE_TYPE, COL_FEE_TYPE])
                     _clear_data_validation(ws, source_row, COL_RECON_STATUS, COL_RECON_STATUS)
                     memo.with_retry(ws.update_cell, source_row, COL_RECON_STATUS, "")
-                    log(f"↳ 已從下方待配對列表移除原候選列第{source_row}列 I:O 與 T")
+                    log(f"↳ 已從下方待配對列表移除原候選列第{source_row}列 I:O 與 T，並保留 I/N/O 下拉選單")
 
                 if needs_confirm:
                     result["confirm_required"] += 1
@@ -810,10 +811,10 @@ def auto_match_bank_rows(
             else:
                 text = "待人工確認"
                 if len(amount_candidates) > 1:
-                    text = f"待人工確認：同金額候選 {len(amount_candidates)} 筆"
+                    text = f"待人工確認：同金額候選 {len(amount_candidates)} 筆，但缺少末碼/姓名/時間依據"
                 elif len(amount_candidates) == 1:
                     c = amount_candidates[0]
-                    text = f"待人工確認：同金額候選 {c.get('order_no') or '-'} {c['name']}"
+                    text = f"待人工確認：同金額候選 {c.get('order_no') or '-'} {c['name']}，但缺少末碼/姓名/時間依據"
                 result["unmatched"] += 1
                 result["failed"] += 1
                 result["errors"].append(f"第{idx}列：{text}")
