@@ -389,6 +389,7 @@ def _format_match_text(year_month: str, service_type: str, fee_type: str, order_
 
 def auto_match_bank_rows(
     region: str,
+    row_spec: str = "",
     overwrite_existing: bool = False,
     default_service_type: str = "清潔",
     default_fee_type: str = "服務費用",
@@ -403,10 +404,10 @@ def auto_match_bank_rows(
     1. 金額必須相同
     2. 優先用 F 欄數字備註比對 M 欄末碼
     3. 沒有可用末碼時，用 F 欄文字備註比對 K 欄姓名
-    4. 唯一候選才自動寫回；多筆/找不到只寫 G 欄提示，不覆蓋 I-M
+    4. 唯一候選才自動寫回；多筆/找不到只寫 LOG，不改 G 欄
 
     成功配對會寫回銀行列：
-    G=摘要、I=服務月份、J=訂單編號、K=姓名、L=金額、M=末碼、N=服務類別、O=費用類別
+    I=服務月份、J=訂單編號、K=姓名、L=金額、M=末碼、N=服務類別、O=費用類別
     """
     log = make_logger(ui_logger)
     result = {
@@ -422,7 +423,13 @@ def auto_match_bank_rows(
 
     ws = get_atm_worksheet(region)
     rows = memo.with_retry(ws.get_all_values)
+    target_row_nums = memo.parse_row_spec(row_spec) if str(row_spec or "").strip() else []
+    target_row_set = set(target_row_nums)
     log(f"===== 開始自動配對 ATM 銀行明細（{region}）=====")
+    if target_row_nums:
+        log(f"指定銀行列號：{target_row_nums}")
+    else:
+        log("未指定銀行列號，將掃描全部列")
 
     # 1-based 欄位：E/F/G/I/J/K/L/M/N/O
     COL_INCOME = 5
@@ -465,6 +472,9 @@ def auto_match_bank_rows(
 
     for idx, row in enumerate(rows, start=1):
         try:
+            if target_row_set and idx not in target_row_set:
+                continue
+
             income = _to_int_amount(memo.safe_cell(row, COL_INCOME))
             note = memo.safe_cell(row, COL_NOTE)
             current_order_no = memo.safe_cell(row, COL_MATCH_ORDER_NO)
