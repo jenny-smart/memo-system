@@ -650,8 +650,8 @@ st.markdown("""
 <div class="hero">
   <div class="hero-emoji">📝</div>
   <div>
-    <div class="hero-title">檸檬訂單備忘錄</div>
-    <div class="hero-sub">Memo 回填・排班管理・ATM 對帳・清潔異動 整合工具</div>
+    <div class="hero-title">檸檬營運自動化工具</div>
+    <div class="hero-sub">訂單備註・排班功能・ATM 對帳・服務異動 整合工具</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
