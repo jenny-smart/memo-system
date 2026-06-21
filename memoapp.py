@@ -1782,40 +1782,42 @@ def render_change_order_section():
 
 SCENARIO_OPTIONS = [
     "僅開車馬費發票",
-    "異動（待收款）",
-    "異動（待退款）",
-    "加時（待收款）",
-    "減時（待退款）",
-    "客訴（待退款）",
-    "物損（待退款）",
+    "異動費(待收款)",
+    "異動費(待退款)",
+    "異動平日轉週末(待收款)",
+    "異動週末轉平日(待退款)",
+    "加時(待收款)",
+    "減時(待退款)",
+    "客訴(待退款)",
+    "物損(待退款)",
 ]
 
 
 def render_change_order_stage_a():
-    step("3", "輸入電話，查詢最近一次已付款訂單")
+    step("3", "選擇查詢方式，查詢最近一次已付款未服務訂單")
 
     st.markdown(
-        '<div class="info-strip">輸入電話查詢，會找出「最近一次服務日期」且狀態為「已付款」的訂單；'
+        '<div class="info-strip">輸入電話查詢，會找出「離今天最近、尚未服務」且狀態為「已付款」的訂單；'
         '若同一天有多筆（可能是合併訂單），會全部列出讓您勾選。'
         '也可以切換成「訂單編號」直接指定單一筆。選好訂單後，再往下做異動判斷'
         '（車馬費／異動／加時／減時／客訴／物損）。</div>',
         unsafe_allow_html=True
     )
 
-    c1, c2 = st.columns([1, 1.5])
-    with c1:
+    q1, q2 = st.columns([1, 1.5])
+    with q1:
         region = st.selectbox("地區", ["台北", "台中"], key="co_region_a")
+    with q2:
         query_by = st.radio("查詢方式", ["電話", "訂單編號"], horizontal=True, key="co_query_by")
 
-    with c2:
-        if query_by == "電話":
-            keyword_input = st.text_input(
-                "電話", placeholder="例：0912345678", key="co_phone_keyword"
-            )
-        else:
-            keyword_input = st.text_input(
-                "訂單編號", placeholder="例：LC00211483", key="co_orderno_keyword"
-            )
+    if query_by == "電話":
+        keyword_input = st.text_input(
+            "電話", placeholder="例：0912345678", key="co_phone_keyword"
+        )
+    else:
+        keyword_input = st.text_input(
+            "訂單編號", placeholder="例：LC00211483", key="co_orderno_keyword"
+        )
 
     search_btn = st.button(
         "🔍 查詢訂單",
@@ -1897,8 +1899,8 @@ def render_change_order_stage_a():
     with c1:
         scenario = st.radio("情境", SCENARIO_OPTIONS, key="co_scenario")
 
-        is_time_change = scenario in ("加時（待收款）", "減時（待退款）")
-        is_manual_refund = scenario in ("客訴（待退款）", "物損（待退款）")
+        is_time_change = scenario in ("加時(待收款)", "減時(待退款)")
+        is_manual_refund = scenario in ("客訴(待退款)", "物損(待退款)")
 
         change_hours = None
         change_person = None
@@ -1923,7 +1925,7 @@ def render_change_order_stage_a():
             "服務日期（用於計算工作天數／平日假日，預設取自所選訂單）",
             value=default_service_date, key="co_service_date"
         )
-        service_note = st.text_input("服務註記（寫入 J 欄）", placeholder="例：客通知停水異動服務", key="co_service_note")
+        service_note = st.text_input("後台備註（寫入 K 欄）", placeholder="例：客通知停水異動服務", key="co_service_note")
 
     calc_btn = st.button(
         "🧮 試算",
@@ -1942,7 +1944,7 @@ def render_change_order_stage_a():
                     calc_rows.append(row)
                     continue
 
-                if scenario == "加時（待收款）":
+                if scenario == "加時(待收款)":
                     time_fee_info = change_order.calc_time_change_fee(
                         service_date_input, hours=change_hours, person=change_person
                     )
@@ -1953,7 +1955,7 @@ def render_change_order_stage_a():
                     calc_rows.append(row)
                     continue
 
-                if scenario == "減時（待退款）":
+                if scenario == "減時(待退款)":
                     time_fee_info = change_order.calc_time_change_fee(
                         service_date_input, hours=change_hours, person=change_person
                     )
@@ -1964,7 +1966,35 @@ def render_change_order_stage_a():
                     calc_rows.append(row)
                     continue
 
-                if scenario == "客訴（待退款）":
+                if scenario == "異動平日轉週末(待收款)":
+                    time_fee_info = change_order.calc_flat_person_hour_fee(
+                        hours=order.get("service_hours", 0),
+                        person=order.get("cleaner_count", 0),
+                        rate=change_order.TIME_RATE_WEEKDAY,
+                        label="平日每人時",
+                    )
+                    row = change_order.build_weekday_to_weekend_row(
+                        order, time_fee_info, service_note, customer_type=customer_type,
+                        service_date=service_date_input
+                    )
+                    calc_rows.append(row)
+                    continue
+
+                if scenario == "異動週末轉平日(待退款)":
+                    time_fee_info = change_order.calc_flat_person_hour_fee(
+                        hours=order.get("service_hours", 0),
+                        person=order.get("cleaner_count", 0),
+                        rate=change_order.TIME_RATE_WEEKEND,
+                        label="週末每人時",
+                    )
+                    row = change_order.build_weekend_to_weekday_row(
+                        order, time_fee_info, service_note, customer_type=customer_type,
+                        service_date=service_date_input
+                    )
+                    calc_rows.append(row)
+                    continue
+
+                if scenario == "客訴(待退款)":
                     row = change_order.build_manual_refund_row(
                         order, manual_amount, change_order.TYPE_COMPLAINT_REFUND,
                         service_note, customer_type=customer_type,
@@ -1973,7 +2003,7 @@ def render_change_order_stage_a():
                     calc_rows.append(row)
                     continue
 
-                if scenario == "物損（待退款）":
+                if scenario == "物損(待退款)":
                     row = change_order.build_manual_refund_row(
                         order, manual_amount, change_order.TYPE_DAMAGE_REFUND,
                         service_note, customer_type=customer_type,
@@ -1986,7 +2016,7 @@ def render_change_order_stage_a():
                     order, service_date=service_date_input
                 )
 
-                if scenario == "異動（待收款）":
+                if scenario == "異動費(待收款)":
                     row = change_order.build_charge_row(
                         order, fee_info, service_note, customer_type=customer_type,
                         service_date=service_date_input
@@ -2020,7 +2050,8 @@ def render_change_order_stage_a():
                     <b>類型：</b>{row.get('C','')}　<b>狀態：</b>{row.get('B','')}<br>
                     <b>原服務時間：</b>{row.get('I','')}<br>
                     <b>試算金額：</b>${row.get('_calc_amount','')}<br>
-                    <b>備註：</b>{row.get('J','')}<br>
+                    <b>J 欄內容：</b>{row.get('J','')}<br>
+                    <b>K 欄後台備註：</b>{row.get('K','')}<br>
                     <b>計算依據：</b>{row.get('_calc_note','')}
                 </div>
             </div>
@@ -2059,8 +2090,8 @@ def render_change_order_stage_b():
     step("3", "讀取清潔異動工作表待處理列")
 
     st.markdown(
-        '<div class="info-strip">會掃描「待收款」「待退款」且金額已填的列，'
-        '逐筆把 isCharge / isRefund 等欄位回填到後台訂單修改頁，完成後自動把 Sheet 狀態改為已收款/已退款。</div>',
+        '<div class="info-strip">會掃描 B 欄為「待收款」「待退款」「已收款」「已退款」且金額已填的列，'
+        '依每列狀態回填後台訂單修改頁；完成後只寫入 AD 欄系統回填時間，不會改 B 欄狀態。</div>',
         unsafe_allow_html=True
     )
 
@@ -2110,18 +2141,23 @@ def render_change_order_stage_b():
 
         selected = []
         for item in pending:
+            status = item.get("status") or ("待收款" if item["kind"] == "charge" else "待退款")
             checked = st.checkbox(
-                f"{item['order_no']}（{'待收款' if item['kind']=='charge' else '待退款'}，Sheet 第 {item['sheet_row']} 列）",
+                f"{item['order_no']}（{status}，Sheet 第 {item['sheet_row']} 列）",
                 value=True,
                 key=f"co_pick_{item['sheet_row']}",
             )
+            detail = f"H 欄姓名：{item.get('customer_name','')}　｜　J 欄：{item.get('j_note','')}"
+            if item.get("kind") == "refund":
+                detail += f"　｜　Y 欄：{item.get('refund_invoice_type','')}"
+            st.caption(detail)
             if checked:
                 selected.append(item)
 
         st.metric("已勾選筆數", len(selected))
 
         st.markdown(
-            '<div class="warn-strip">⚠️ 這個動作會直接寫入後台訂單的待加收/待退款欄位，並回寫 Sheet 狀態，請確認金額無誤再送出。</div>',
+            '<div class="warn-strip">⚠️ 這個動作會依 B 欄狀態寫入後台待加收/待退款/已收款/已退款欄位；Sheet B 欄不會被自動改狀態，請確認金額與日期無誤再送出。</div>',
             unsafe_allow_html=True
         )
 
