@@ -533,6 +533,14 @@ def auto_match_bank_rows(
                 ]]
                 # 僅寫入 I:O，不覆蓋 G 欄
                 memo.with_retry(ws.update, f"I{idx}:O{idx}", [values[0][1:]], value_input_option="RAW")
+
+                # 若候選訂單是從下方待付款列表移上來，成功配對後清空原候選列 I:O，
+                # 避免同一筆訂單留在下方列表重複出現。
+                source_row = int(c.get("row") or 0)
+                if source_row and source_row != idx:
+                    memo.with_retry(ws.update, f"I{source_row}:O{source_row}", [["", "", "", "", "", "", ""]], value_input_option="RAW")
+                    log(f"↳ 已清空原候選列第{source_row}列 I:O")
+
                 used_order_nos.add(c["order_no"])
                 result["success"] += 1
                 result["updated_orders"] += 1
