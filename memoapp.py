@@ -11,8 +11,8 @@ atm = importlib.reload(atm)
 import change_order
 
 st.set_page_config(
-    page_title="Memo 自動回填系統",
-    page_icon="📝",
+    page_title="檸檬營運自動化工具",
+    page_icon="🍋",
     layout="wide"
 )
 
@@ -526,7 +526,7 @@ def render_preview_blocks(rows):
     m3.metric("無可參照來源", len(no_rows))
 
     st.markdown(
-        '<div class="info-strip">每一列是「目標訂單」；若有來源訂單，代表已找到最近一筆同地址＋已付款＋已處理＋有備註的來源。若該地址完全沒有歷史訂單，會視為新成單並自動帶入固定提醒文字。</div>',
+        '<div class="info-strip">\n<b>預覽說明</b>\n<ul>\n<li>目前訂單：要回填備註的目標訂單</li>\n<li>來源訂單：最近一筆可參照的歷史訂單</li>\n<li>新成單：沒有歷史來源時，會帶入預設提醒文字</li>\n</ul>\n</div>',
         unsafe_allow_html=True
     )
 
@@ -648,10 +648,10 @@ def render_preview_blocks(rows):
 
 st.markdown("""
 <div class="hero">
-  <div class="hero-emoji">📝</div>
+  <div class="hero-emoji">🍋</div>
   <div>
-    <div class="hero-title">檸檬訂單備忘錄</div>
-    <div class="hero-sub">Memo 回填・排班管理・ATM 對帳・清潔異動 整合工具</div>
+    <div class="hero-title">檸檬營運自動化工具</div>
+    <div class="hero-sub">客服・排班・財務・服務異動作業平台</div>
   </div>
 </div>
 """, unsafe_allow_html=True)
@@ -711,12 +711,12 @@ with st.expander(
 
 if not st.session_state.credentials_ready:
     st.markdown(
-        '<div class="info-strip">⚠️ 請先在上方輸入帳號密碼，才能使用下方功能（執行功能時會自動登入，不用先按 Login）。</div>',
+        '<div class="info-strip">\n<b>開始前</b>\n<ul>\n<li>請先輸入後台帳號與密碼</li>\n<li>執行功能時會自動登入</li>\n<li>不用另外按 Login</li>\n</ul>\n</div>',
         unsafe_allow_html=True
     )
 elif not st.session_state.is_logged_in:
     st.markdown(
-        '<div class="info-strip">ℹ️ 帳密已就緒，第一次執行下方任何功能時會自動登入一次。</div>',
+        '<div class="info-strip">\n<b>帳密已就緒</b>\n<ul>\n<li>第一次執行功能時會自動登入</li>\n<li>登入後各功能共用同一組 Session</li>\n</ul>\n</div>',
         unsafe_allow_html=True
     )
 
@@ -731,9 +731,9 @@ step("2", "選擇功能")
 main_section = st.selectbox(
     "功能",
     [
-        "📝 訂單客服備註",
-        "📅 排班功能",
-        "💳 ATM 對帳",
+        "📋 客服作業",
+        "📅 排班管理",
+        "💰 財務對帳",
         "🔄 服務異動",
     ],
     label_visibility="collapsed",
@@ -741,32 +741,67 @@ main_section = st.selectbox(
 )
 
 MAIN_SECTION_HELP = {
-    "📝 訂單客服備註": """
+    "📋 客服作業": """
     <div class="info-strip">
-        <b>功能說明：</b>自動尋找同地址的歷史訂單客服備註，回填到目前未處理訂單。<br>
-        <b>適用情境：</b>舊客回購、定期客戶、新成單客服整理。<br>
-        <b>建議流程：</b>選擇查詢方式 → 查詢 / 預覽 → 勾選要處理的訂單 → 執行回填。
+        <b>用途</b>
+        <ul>
+            <li>舊客回購備註回填</li>
+            <li>新成單提醒建立</li>
+            <li>客服備忘錄整理</li>
+        </ul>
+        <b>流程</b>
+        <ol>
+            <li>選擇查詢方式</li>
+            <li>查詢並預覽</li>
+            <li>勾選訂單</li>
+            <li>執行回填</li>
+        </ol>
     </div>
     """,
-    "📅 排班功能": """
+    "📅 排班管理": """
     <div class="info-strip">
-        <b>功能說明：</b>排班相關作業整合入口，包含排班匯入、檸檬人空檔查詢、清空排班。<br>
-        <b>適用情境：</b>月排班、臨時派工、補人力、取消案件、班表重整。<br>
-        <b>下一步：</b>請在下方選擇要使用的排班子功能。
+        <b>可執行項目</b>
+        <ul>
+            <li>排班匯入</li>
+            <li>檸檬人空檔查詢</li>
+            <li>清空排班</li>
+        </ul>
+        <b>下一步</b>
+        <ul>
+            <li>請選擇下方排班子功能</li>
+        </ul>
     </div>
     """,
-    "💳 ATM 對帳": """
+    "💰 財務對帳": """
     <div class="info-strip">
-        <b>功能說明：</b>處理 ATM 待付款清單、銀行明細配對、付款狀態更新、開立發票與發送確認信。<br>
-        <b>適用情境：</b>每日財務對帳、補款確認。<br>
-        <b>建議流程：</b>待付款清單查詢 → 配對銀行明細 → 更新系統對帳。
+        <b>建議順序</b>
+        <ol>
+            <li>待付款清單查詢</li>
+            <li>配對銀行明細</li>
+            <li>更新系統對帳</li>
+        </ol>
+        <b>用途</b>
+        <ul>
+            <li>每日 ATM 對帳</li>
+            <li>補款確認</li>
+            <li>發票與確認信處理</li>
+        </ul>
     </div>
     """,
     "🔄 服務異動": """
     <div class="info-strip">
-        <b>功能說明：</b>處理改期、取消、異動費、車馬費、退款、客訴退款與物損退款。<br>
-        <b>適用情境：</b>客服異動處理、財務收退款同步。<br>
-        <b>建議流程：</b>階段 A 查詢試算並寫入工作表 → 階段 B 讀取待處理資料並回填後台。
+        <b>支援項目</b>
+        <ul>
+            <li>車馬費、異動費</li>
+            <li>加時、減時</li>
+            <li>退款、客訴退款、物損退款</li>
+        </ul>
+        <b>建議流程</b>
+        <ol>
+            <li>階段 A：查詢試算</li>
+            <li>確認後寫入工作表</li>
+            <li>階段 B：同步回後台</li>
+        </ol>
     </div>
     """,
 }
@@ -775,15 +810,15 @@ st.markdown(MAIN_SECTION_HELP.get(main_section, ""), unsafe_allow_html=True)
 
 shift_sub_section = None
 
-if main_section == "📅 排班功能":
+if main_section == "📅 排班管理":
     step("3", "選擇排班子功能")
 
     shift_sub_section = st.radio(
         "排班子功能",
         [
-            "排班匯入",
-            "檸檬人空檔查詢",
-            "清空排班",
+            "📥 排班匯入",
+            "🍋 檸檬人空檔查詢",
+            "🧹 清空排班",
         ],
         horizontal=True,
         label_visibility="collapsed",
@@ -791,24 +826,36 @@ if main_section == "📅 排班功能":
     )
 
     SHIFT_SUB_HELP = {
-        "排班匯入": """
+        "📥 排班匯入": """
         <div class="info-strip">
-            <b>排班匯入：</b>上傳 Excel / CSV 批次更新專員班表。<br>
-            <b>下一步：</b>上傳檔案 → Dry Run 預覽 → 確認合併結果 → 正式儲存。<br>
-            <b>提醒：</b>正式儲存會直接改動後台排班資料。
+            <b>操作流程</b>
+            <ol>
+                <li>上傳 Excel / CSV</li>
+                <li>執行 Dry Run 預覽</li>
+                <li>確認合併結果</li>
+                <li>正式儲存</li>
+            </ol>
         </div>
         """,
-        "檸檬人空檔查詢": """
+        "🍋 檸檬人空檔查詢": """
         <div class="info-strip">
-            <b>檸檬人空檔查詢：</b>依指定日期與班別，自動檢查檸檬人 1～N 是否有空檔。<br>
-            <b>下一步：</b>選擇日期與類型 → 尋找空檔 → 確認候選檸檬人 → 送出勾班。
+            <b>操作流程</b>
+            <ol>
+                <li>選擇日期</li>
+                <li>選擇班別</li>
+                <li>搜尋空檔</li>
+                <li>確認勾班</li>
+            </ol>
         </div>
         """,
-        "清空排班": """
+        "🧹 清空排班": """
         <div class="warn-strip">
-            <b>清空排班：</b>批次移除指定人員、日期區間內的既有班表。<br>
-            <b>下一步：</b>選擇清空模式 → 輸入人員與期間 / 來源清單 → 確認後執行。<br>
-            <b>提醒：</b>此功能會直接更新後台排班，請確認人員與日期後再執行。
+            <b>危險操作</b>
+            <ul>
+                <li>會直接修改後台排班</li>
+                <li>沒有逐筆預覽機制</li>
+                <li>請確認人員與日期後再執行</li>
+            </ul>
         </div>
         """,
     }
@@ -826,7 +873,7 @@ def render_memo_section():
     step("3", "設定查詢條件")
 
     st.markdown(
-        '<div class="info-strip"><b>下一步：</b>請選擇要用 Google Sheet、電話或搜尋條件來找訂單。查詢後會先顯示預覽，確認勾選後才會回填客服備註。</div>',
+        '<div class="info-strip">\n<b>操作流程</b>\n<ol>\n<li>選擇查詢方式</li>\n<li>查詢訂單並預覽</li>\n<li>勾選要處理的資料</li>\n<li>執行客服備註回填</li>\n</ol>\n</div>',
         unsafe_allow_html=True
     )
 
@@ -856,9 +903,36 @@ def render_memo_section():
     execute_btn = False
 
     MEMO_MODE_HELP = {
-        "By Google Sheet": '<div class="info-strip"><b>By Google Sheet：</b>依 Sheet 列號處理，適合每日批次回填。可指定列號，也可依剩餘未處理筆數執行。</div>',
-        "By 電話": '<div class="info-strip"><b>By 電話：</b>輸入一支或多支電話，系統會找出該客戶目前未處理訂單，並比對最近可參照來源訂單。</div>',
-        "By 搜尋條件": '<div class="info-strip"><b>By 搜尋條件：</b>依服務日期 / 購買日期與付款狀態批次搜尋未處理訂單，適合每日整理。</div>',
+        "By Google Sheet": """
+        <div class="info-strip">
+        <b>By Google Sheet</b>
+        <ul>
+            <li>依 Sheet 列號處理</li>
+            <li>支援指定列號或前 N 筆未處理</li>
+            <li>適合每日批次回填</li>
+        </ul>
+        </div>
+        """,
+        "By 電話": """
+        <div class="info-strip">
+        <b>By 電話</b>
+        <ul>
+            <li>可輸入一支或多支電話</li>
+            <li>找出目前未處理訂單</li>
+            <li>比對最近可參照來源訂單</li>
+        </ul>
+        </div>
+        """,
+        "By 搜尋條件": """
+        <div class="info-strip">
+        <b>By 搜尋條件</b>
+        <ul>
+            <li>依服務日期或購買日期搜尋</li>
+            <li>可篩選付款狀態</li>
+            <li>適合每日整理未處理訂單</li>
+        </ul>
+        </div>
+        """,
     }
     st.markdown(MEMO_MODE_HELP.get(mode, ""), unsafe_allow_html=True)
 
@@ -871,7 +945,7 @@ def render_memo_section():
 
         if sheet_run_mode == "指定列號":
             st.markdown(
-                '<div class="info-strip">列號支援：單列 <code>2</code>、逗號分隔 <code>2,3,5</code>、區間 <code>2,3,5-7</code></div>',
+                '<div class="info-strip">\n<b>列號格式</b>\n<ul>\n<li>單列：<code>2</code></li>\n<li>多列：<code>2,3,5</code></li>\n<li>區間：<code>2,3,5-7</code></li>\n</ul>\n</div>',
                 unsafe_allow_html=True
             )
 
@@ -1146,12 +1220,11 @@ def render_shift_import_section():
     step("3", "上傳排班匯入檔")
 
     st.markdown(
-        '<div class="info-strip">欄位需求：<code>地區</code> / <code>日期</code> / <code>類型</code> / <code>時段</code> / <code>名稱</code>。'
-        '「類型」支援：全6、全8、上4、上3、上2、下4、下3、下2、晚2、清。</div>',
+        '<div class="info-strip">\n<b>檔案欄位</b>\n<ul>\n<li>地區、日期、類型、時段、名稱</li>\n</ul>\n<b>支援類型</b>\n<ul>\n<li>全6、全8</li>\n<li>上4、上3、上2</li>\n<li>下4、下3、下2</li>\n<li>晚2、清</li>\n</ul>\n</div>',
         unsafe_allow_html=True
     )
     st.markdown(
-        '<div class="warn-strip">⚠️ 這個功能會直接改動後台真實排班資料，請務必先用「Dry Run 預覽」確認合併結果正確，再按「正式儲存」。</div>',
+        '<div class="warn-strip">\n<b>注意</b>\n<ul>\n<li>正式儲存會直接修改後台排班</li>\n<li>請先用 Dry Run 確認結果</li>\n<li>確認無誤後再正式儲存</li>\n</ul>\n</div>',
         unsafe_allow_html=True
     )
 
@@ -1267,8 +1340,7 @@ def render_lemon_ren_section():
     step("3", "設定要找空檔的日期與類型")
 
     st.markdown(
-        '<div class="info-strip">會依序檢查 檸檬人1 ~ 檸檬人N，找出「該日期、該類型對應的時段」目前沒有被勾選的第一位，'
-        '當作可用的佔位帳號。找到後可以直接送出勾選，或是只查詢不勾選。</div>',
+        '<div class="info-strip">\n<b>操作流程</b>\n<ol>\n<li>選擇日期</li>\n<li>選擇班別類型</li>\n<li>設定檸檬人最大數量</li>\n<li>尋找第一位可用檸檬人</li>\n</ol>\n<b>結果</b>\n<ul>\n<li>找到後可直接確認勾班</li>\n<li>找不到會列出已檢查人員</li>\n</ul>\n</div>',
         unsafe_allow_html=True
     )
 
@@ -1394,22 +1466,50 @@ def render_atm_section():
 
     atm_mode = st.radio(
         "",
-        ["待付款清單查詢（/ATM-list）", "配對銀行明細", "更新系統對帳"],
+        ["① 待付款清單查詢", "② 配對銀行明細", "③ 更新系統對帳"],
         horizontal=True,
         label_visibility="collapsed",
         key="atm_mode",
     )
 
     ATM_MODE_HELP = {
-        "待付款清單查詢（/ATM-list）": '<div class="info-strip"><b>步驟 1：</b>從後台查詢 ATM 待付款訂單，整理後貼到 ATM 工作表 I～L 欄。</div>',
-        "配對銀行明細": '<div class="info-strip"><b>步驟 2：</b>用金額、末碼、姓名 / 備註或時間自動配對銀行明細與待付款訂單。</div>',
-        "更新系統對帳": '<div class="warn-strip"><b>步驟 3：</b>確認配對結果後，更新後台付款狀態、開立發票、發送確認信，並回寫 Sheet。此步驟會直接更新系統。</div>',
+        "① 待付款清單查詢": """
+        <div class="info-strip">
+        <b>用途</b>
+        <ul>
+            <li>查詢 ATM 待付款訂單</li>
+            <li>整理成對帳工作表資料</li>
+            <li>貼到 I～L 欄</li>
+        </ul>
+        </div>
+        """,
+        "② 配對銀行明細": """
+        <div class="info-strip">
+        <b>配對依據</b>
+        <ul>
+            <li>金額 + 末碼</li>
+            <li>金額 + 姓名</li>
+            <li>金額 + 備註或時間</li>
+        </ul>
+        </div>
+        """,
+        "③ 更新系統對帳": """
+        <div class="warn-strip">
+        <b>最後一步</b>
+        <ul>
+            <li>更新付款狀態</li>
+            <li>開立發票</li>
+            <li>發送確認信</li>
+            <li>回寫 Sheet</li>
+        </ul>
+        </div>
+        """,
     }
     st.markdown(ATM_MODE_HELP.get(atm_mode, ""), unsafe_allow_html=True)
 
-    if atm_mode.startswith("待付款清單查詢"):
+    if "待付款" in atm_mode:
         render_atm_list_mode()
-    elif atm_mode.startswith("配對銀行明細"):
+    elif "配對" in atm_mode:
         render_atm_auto_match_mode()
     else:
         render_atm_reconcile_mode()
@@ -1419,12 +1519,11 @@ def render_atm_reconcile_mode():
     step("5", "更新系統對帳")
 
     st.markdown(
-        '<div class="info-strip">完成「待付款清單查詢」與「配對銀行明細」後，再用這裡依序處理已確認的對帳列：搜尋訂單 → 按已付款 → 開立發票 → 發確認信，'
-        '完成後回填 P=對帳完成時間（台北時間）、Q=付款時間、R=發票號碼、S=發確認信，並在 T 欄標示已更新系統。</div>',
+        '<div class="info-strip">\n<b>執行內容</b>\n<ol>\n<li>更新付款狀態</li>\n<li>開立發票</li>\n<li>發送確認信</li>\n</ol>\n<b>自動回填欄位</b>\n<ul>\n<li>P：對帳完成時間</li>\n<li>Q：付款時間</li>\n<li>R：發票號碼</li>\n<li>S：確認信狀態</li>\n<li>T：已更新系統</li>\n</ul>\n</div>',
         unsafe_allow_html=True
     )
     st.markdown(
-        '<div class="warn-strip">⚠️ 這是最後一步系統更新；三個動作（尤其是發確認信）都是「點了就送出」，沒有預覽機制，輸入列號後按執行就會直接全部跑，請務必先確認列號正確再送出。</div>',
+        '<div class="warn-strip">\n<b>注意</b>\n<ul>\n<li>執行後會立即更新系統</li>\n<li>發確認信會直接寄出</li>\n<li>請確認列號正確後再執行</li>\n</ul>\n</div>',
         unsafe_allow_html=True
     )
 
@@ -1517,13 +1616,11 @@ def render_atm_auto_match_mode():
     step("4", "配對銀行明細")
 
     st.markdown(
-        '<div class="info-strip">先完成「待付款清單查詢」產生 I-L 欄，再貼上 A-F 銀行明細；M 欄可等客人告知末碼後填入。'
-        '按下方按鈕會自動用「金額＋末碼」優先配對；若客人有寫匯款備註、沒有末碼，則改用「金額＋姓名/備註」配對。'
-        '成功配對會寫回 I~O 欄、P 欄台北時間與 T 欄狀態；I/N/O 會維持下拉選單；下方待配對列被清空後也會保留 I/N/O 下拉選單，P/T 若原為下拉選單會先清除該格驗證，不會覆蓋 G 欄；Q~S 保留給系統對帳結果。</div>',
+        '<div class="info-strip">\n<b>操作前</b>\n<ul>\n<li>先完成待付款清單查詢</li>\n<li>確認銀行明細已貼到 A～F 欄</li>\n<li>M 欄可填入客戶告知的末碼</li>\n</ul>\n<b>系統會寫回</b>\n<ul>\n<li>I～O：配對結果</li>\n<li>P：台北時間</li>\n<li>T：配對狀態</li>\n</ul>\n</div>',
         unsafe_allow_html=True
     )
     st.markdown(
-        '<div class="warn-strip">⚠️ 不可只靠金額唯一自動配對；必須有末碼、姓名/備註或時間相符依據；若符合需確認、非訂單收入或疑似拆單規則，會先預填 I~O、P 欄台北時間，並在 T 欄標示狀態；多筆或找不到時只顯示 LOG，不會修改 G 欄。</div>',
+        '<div class="warn-strip">\n<b>配對限制</b>\n<ul>\n<li>只靠金額不會自動配對</li>\n<li>必須有末碼、姓名、備註或時間依據</li>\n<li>多筆或找不到時只顯示 LOG</li>\n</ul>\n</div>',
         unsafe_allow_html=True
     )
 
@@ -1611,8 +1708,7 @@ def render_atm_list_mode():
     step("3", "待付款清單查詢")
 
     st.markdown(
-        '<div class="info-strip">會用「訂購日期-迄」「勾選訂單統計表」「付款狀態：待付款」「付款方式：ATM」這組條件去查詢，'
-        '整理成「訂單服務年月｜訂單編號｜客戶名稱｜總金額扣車馬費」，貼到跟 ATM 對帳相同的工作表（從 B 欄最後一筆資料下方 5 列開始的 I~L 欄）。</div>',
+        '<div class="info-strip">\n<b>查詢條件</b>\n<ul>\n<li>付款狀態：待付款</li>\n<li>付款方式：ATM</li>\n<li>訂購日期：到指定日期為止</li>\n</ul>\n<b>貼上內容</b>\n<ul>\n<li>訂單服務年月</li>\n<li>訂單編號</li>\n<li>客戶名稱</li>\n<li>總金額扣車馬費</li>\n</ul>\n</div>',
         unsafe_allow_html=True
     )
 
@@ -1751,12 +1847,11 @@ def render_clear_shift_section():
         step("3", "設定要清空的人員與期間")
 
         st.markdown(
-            '<div class="info-strip">輸入專員姓名（含檸檬人，例如「檸檬人3」「檸檬人甲」），可用逗號分隔輸入多人'
-            '（例如「檸檬人2,檸檬人4」），會把每個人在指定期間內，每一天的 全天/上午/下午/晚上 四個時段全部清空並儲存。</div>',
+            '<div class="info-strip">\n<b>操作方式</b>\n<ul>\n<li>輸入專員姓名或檸檬人名稱</li>\n<li>多人可用逗號分隔</li>\n<li>選擇開始與結束日期</li>\n</ul>\n<b>清空範圍</b>\n<ul>\n<li>全天、上午、下午、晚上</li>\n</ul>\n</div>',
             unsafe_allow_html=True
         )
         st.markdown(
-            '<div class="warn-strip">⚠️ 這個動作會直接覆寫後台真實排班資料，且沒有預覽機制，請務必確認姓名與日期區間正確再執行。</div>',
+            '<div class="warn-strip">\n<b>注意</b>\n<ul>\n<li>會直接覆寫後台排班</li>\n<li>沒有預覽機制</li>\n<li>請確認姓名與日期區間</li>\n</ul>\n</div>',
             unsafe_allow_html=True
         )
 
@@ -1862,8 +1957,7 @@ def render_clear_shift_section():
         step("3", "設定要掃描的週次")
 
         st.markdown(
-            '<div class="info-strip">輸入該週任一天的日期，會抓清潔班表（每頁一週）裡每一天「未配班」灰底清單，'
-            '找出裡面出現的檸檬人（代表檸檬人目前佔用著該時段），先列出來給你確認，再決定要不要清空。</div>',
+            '<div class="info-strip">\n<b>操作流程</b>\n<ol>\n<li>輸入該週任一天日期</li>\n<li>掃描未配班清單</li>\n<li>確認出現的檸檬人</li>\n<li>執行清空</li>\n</ol>\n</div>',
             unsafe_allow_html=True
         )
 
@@ -1937,7 +2031,7 @@ def render_clear_shift_section():
                     """, unsafe_allow_html=True)
 
                 st.markdown(
-                    '<div class="warn-strip">⚠️ 確認執行後，會把上面每個檸檬人在列出的日期，整天（全天/上午/下午/晚上）的勾選全部清空並儲存，沒有逐筆預覽機制。</div>',
+                    '<div class="warn-strip">\n<b>確認前請檢查</b>\n<ul>\n<li>檸檬人名稱</li>\n<li>佔用日期</li>\n<li>清空後無法逐筆復原</li>\n</ul>\n</div>',
                     unsafe_allow_html=True
                 )
 
@@ -1996,8 +2090,27 @@ def render_change_order_section():
     )
 
     CHANGE_ORDER_MODE_HELP = {
-        "階段 A：查詢試算（寫入清潔異動工作表）": '<div class="info-strip"><b>階段 A：</b>查詢訂單並試算車馬費、異動費或退款金額，確認後寫入清潔異動工作表。</div>',
-        "階段 B：回填系統（讀工作表寫回後台）": '<div class="warn-strip"><b>階段 B：</b>讀取清潔異動工作表待處理列，將收款 / 退款 / 發票資料同步回後台。執行前請確認工作表資料正確。</div>',
+        "階段 A：查詢試算（寫入清潔異動工作表）": """
+        <div class="info-strip">
+        <b>階段 A</b>
+        <ul>
+            <li>查詢訂單</li>
+            <li>選擇異動情境</li>
+            <li>試算金額</li>
+            <li>寫入清潔異動工作表</li>
+        </ul>
+        </div>
+        """,
+        "階段 B：回填系統（讀工作表寫回後台）": """
+        <div class="warn-strip">
+        <b>階段 B</b>
+        <ul>
+            <li>讀取待處理列</li>
+            <li>同步收款 / 退款 / 發票資料</li>
+            <li>回填後台</li>
+        </ul>
+        </div>
+        """,
     }
     st.markdown(CHANGE_ORDER_MODE_HELP.get(co_mode, ""), unsafe_allow_html=True)
 
@@ -2028,10 +2141,7 @@ def render_change_order_stage_a():
     step("3", "選擇查詢方式，查詢目前已付款未服務訂單")
 
     st.markdown(
-        '<div class="info-strip">輸入電話查詢，會列出目前「已付款且尚未服務」的訂單，並依服務日期由近到遠排序。'
-        '也可以切換成「訂單編號」直接指定單一筆。選好訂單後，再往下做異動判斷；'
-        '若是平日轉週末或週末轉平日，請選擇對應互轉情境計算每人時差額。'
-        '（車馬費／異動／加時／減時／客訴／物損）。</div>',
+        '<div class="info-strip">\n<b>操作流程</b>\n<ol>\n<li>用電話或訂單編號查詢</li>\n<li>勾選要處理的訂單</li>\n<li>選擇異動情境</li>\n<li>試算金額</li>\n</ol>\n<b>支援情境</b>\n<ul>\n<li>車馬費、異動費</li>\n<li>加時、減時</li>\n<li>客訴、物損</li>\n</ul>\n</div>',
         unsafe_allow_html=True
     )
 
@@ -2321,8 +2431,7 @@ def render_change_order_stage_b():
     step("3", "讀取清潔異動工作表待處理列")
 
     st.markdown(
-        '<div class="info-strip">會掃描 B 欄為「待收款」「待退款」「已收款」「已退款」且金額已填的列，'
-        '依每列狀態回填後台訂單修改頁；完成後只寫入 AD 欄系統回填時間，不會改 B 欄狀態。</div>',
+        '<div class="info-strip">\n<b>掃描條件</b>\n<ul>\n<li>B 欄為待收款、待退款、已收款、已退款</li>\n<li>金額欄位已填寫</li>\n</ul>\n<b>回填結果</b>\n<ul>\n<li>依狀態寫回後台</li>\n<li>AD 欄寫入系統回填時間</li>\n<li>不會自動修改 B 欄狀態</li>\n</ul>\n</div>',
         unsafe_allow_html=True
     )
 
@@ -2388,7 +2497,7 @@ def render_change_order_stage_b():
         st.metric("已勾選筆數", len(selected))
 
         st.markdown(
-            '<div class="warn-strip">⚠️ 這個動作會依 B 欄狀態寫入後台待加收/待退款/已收款/已退款欄位；Sheet B 欄不會被自動改狀態，請確認金額與日期無誤再送出。</div>',
+            '<div class="warn-strip">\n<b>送出前請確認</b>\n<ul>\n<li>金額正確</li>\n<li>日期正確</li>\n<li>B 欄狀態正確</li>\n<li>Sheet B 欄不會自動改狀態</li>\n</ul>\n</div>',
             unsafe_allow_html=True
         )
 
@@ -2430,18 +2539,18 @@ def render_change_order_stage_b():
 # 依目前選擇的功能渲染對應區塊
 # ============================================================
 
-if main_section == "📝 訂單客服備註":
+if main_section == "📋 客服作業":
     render_memo_section()
 
-elif main_section == "📅 排班功能":
-    if shift_sub_section == "排班匯入":
+elif main_section == "📅 排班管理":
+    if shift_sub_section == "📥 排班匯入":
         render_shift_import_section()
-    elif shift_sub_section == "檸檬人空檔查詢":
+    elif shift_sub_section == "🍋 檸檬人空檔查詢":
         render_lemon_ren_section()
     else:
         render_clear_shift_section()
 
-elif main_section == "💳 ATM 對帳":
+elif main_section == "💰 財務對帳":
     render_atm_section()
 
 elif main_section == "🔄 服務異動":
