@@ -316,6 +316,247 @@ def process_atm_rows(
     return result
 
 
+
+
+# -----------------------------------------------------------------------------
+# ATM Sheet 自動配對：銀行明細 A-F ↔ 待付款清單 I-M
+# -----------------------------------------------------------------------------
+def _to_int_amount(value) -> Optional[int]:
+    """把 Sheet 金額（可能含逗號、$、空白）轉成整數；不能轉回傳 None。"""
+    s = str(value or "").strip()
+    if not s:
+        return None
+    s = re.sub(r"[^0-9\-]", "", s)
+    if not s or s == "-":
+        return None
+    try:
+        return int(s)
+    except Exception:
+        return None
+
+
+def _digits(value: str) -> str:
+    return re.sub(r"\D", "", str(value or ""))
+
+
+def _norm_code(value: str) -> str:
+    """末碼比對用：去掉非數字與前導 0，但保留全 0 的情境。"""
+    d = _digits(value)
+    return d.lstrip("0") or ("0" if d else "")
+
+
+def _bank_note_has_code(bank_note: str, customer_code: str) -> bool:
+    """
+    判斷銀行備註是否可能包含客人回報的後五碼。
+    實務上 M 欄常會因前導 0 被 Sheet 吃掉，所以用 suffix/去前導 0 的方式放寬。
+    """
+    note_digits = _digits(bank_note)
+    code_digits = _digits(customer_code)
+    if not note_digits or not code_digits:
+        return False
+
+    note_norm = _norm_code(note_digits)
+    code_norm = _norm_code(code_digits)
+    last5_norm = _norm_code(note_digits[-5:])
+    last4_norm = _norm_code(note_digits[-4:])
+
+    return (
+        note_digits.endswith(code_digits)
+        or note_norm.endswith(code_norm)
+        or last5_norm == code_norm
+        or last4_norm == code_norm
+    )
+
+
+def _note_matches_name(bank_note: str, customer_name: str) -> bool:
+    """客人有填匯款備註時，銀行備註通常是姓名或短文字。"""
+    note = str(bank_note or "").strip()
+    name = str(customer_name or "").strip()
+    if not note or not name:
+        return False
+    note_compact = re.sub(r"\s+", "", note)
+    name_compact = re.sub(r"\s+", "", name)
+    if not note_compact or not name_compact:
+        return False
+    return note_compact in name_compact or name_compact in note_compact
+
+
+def _format_match_text(year_month: str, service_type: str, fee_type: str, order_no: str, name: str) -> str:
+    service_type = service_type or "清潔"
+    fee_type = fee_type or "服務費用"
+    return f"{year_month}-{service_type}-{fee_type},{order_no},{name}"
+
+
+def auto_match_bank_rows(
+    region: str,
+    overwrite_existing: bool = False,
+    default_service_type: str = "清潔",
+    default_fee_type: str = "服務費用",
+    ui_logger=None,
+) -> Dict:
+    """
+    自動配對 ATM Sheet：
+    - 銀行明細：A-F，其中 E=收入、F=備註
+    - 待付款清單：I-M，其中 I=服務月份、J=訂單編號、K=姓名、L=金額、M=客人告知末碼
+
+    配對規則：
+    1. 金額必須相同
+    2. 優先用 F 欄數字備註比對 M 欄末碼
+    3. 沒有可用末碼時，用 F 欄文字備註比對 K 欄姓名
+    4. 唯一候選才自動寫回；多筆/找不到只寫 G 欄提示，不覆蓋 I-M
+
+    成功配對會寫回銀行列：
+    G=摘要、I=服務月份、J=訂單編號、K=姓名、L=金額、M=末碼、N=服務類別、O=費用類別
+    """
+    log = make_logger(ui_logger)
+    result = {
+        "processed": 0,
+        "success": 0,
+        "failed": 0,
+        "skipped": 0,
+        "updated_orders": 0,
+        "ambiguous": 0,
+        "unmatched": 0,
+        "errors": [],
+    }
+
+    ws = get_atm_worksheet(region)
+    rows = memo.with_retry(ws.get_all_values)
+    log(f"===== 開始自動配對 ATM 銀行明細（{region}）=====")
+
+    # 1-based 欄位：E/F/G/I/J/K/L/M/N/O
+    COL_INCOME = 5
+    COL_NOTE = 6
+    COL_SUMMARY = 7
+    COL_MONTH = 9
+    COL_MATCH_ORDER_NO = 10
+    COL_NAME = 11
+    COL_AMOUNT = 12
+    COL_LAST_CODE = 13
+    COL_SERVICE_TYPE = 14
+    COL_FEE_TYPE = 15
+
+    candidates = []
+    for idx, row in enumerate(rows, start=1):
+        order_no = memo.safe_cell(row, COL_MATCH_ORDER_NO)
+        amount = _to_int_amount(memo.safe_cell(row, COL_AMOUNT))
+        if not order_no or amount is None:
+            continue
+        candidates.append({
+            "row": idx,
+            "year_month": memo.safe_cell(row, COL_MONTH),
+            "order_no": order_no,
+            "name": memo.safe_cell(row, COL_NAME),
+            "amount": amount,
+            "last_code": memo.safe_cell(row, COL_LAST_CODE),
+            "service_type": memo.safe_cell(row, COL_SERVICE_TYPE) or default_service_type,
+            "fee_type": memo.safe_cell(row, COL_FEE_TYPE) or default_fee_type,
+        })
+
+    used_order_nos = set()
+    # 已經配在銀行列上的訂單，避免同一筆待付款被重複配到多筆入帳。
+    for row in rows:
+        income = _to_int_amount(memo.safe_cell(row, COL_INCOME))
+        order_no = memo.safe_cell(row, COL_MATCH_ORDER_NO)
+        if income is not None and order_no:
+            used_order_nos.add(order_no)
+
+    log(f"可配對候選訂單：{len(candidates)} 筆")
+
+    for idx, row in enumerate(rows, start=1):
+        try:
+            income = _to_int_amount(memo.safe_cell(row, COL_INCOME))
+            note = memo.safe_cell(row, COL_NOTE)
+            current_order_no = memo.safe_cell(row, COL_MATCH_ORDER_NO)
+
+            if income is None or not str(note).strip():
+                continue
+
+            result["processed"] += 1
+
+            if current_order_no and not overwrite_existing:
+                result["skipped"] += 1
+                log(f"⏭ 第{idx}列：已有訂單 {current_order_no}，略過")
+                continue
+
+            amount_candidates = [c for c in candidates if c["amount"] == income]
+            if not overwrite_existing:
+                amount_candidates = [c for c in amount_candidates if c["order_no"] not in used_order_nos or c["order_no"] == current_order_no]
+
+            code_matches = [c for c in amount_candidates if c["last_code"] and _bank_note_has_code(note, c["last_code"])]
+            name_matches = [c for c in amount_candidates if _note_matches_name(note, c["name"])]
+
+            match_type = ""
+            matches = []
+            if len(code_matches) == 1:
+                matches = code_matches
+                match_type = "末碼+金額"
+            elif len(code_matches) > 1:
+                matches = code_matches
+                match_type = "末碼+金額"
+            elif len(name_matches) == 1:
+                matches = name_matches
+                match_type = "備註姓名+金額"
+            elif len(name_matches) > 1:
+                matches = name_matches
+                match_type = "備註姓名+金額"
+            else:
+                # 若同金額只有一筆尚未配對，保守提示人工確認，不直接自動配。
+                matches = []
+
+            if len(matches) == 1:
+                c = matches[0]
+                summary = _format_match_text(
+                    c["year_month"], c["service_type"], c["fee_type"], c["order_no"], c["name"]
+                )
+                values = [[
+                    summary,
+                    c["year_month"],
+                    c["order_no"],
+                    c["name"],
+                    c["amount"],
+                    c["last_code"],
+                    c["service_type"],
+                    c["fee_type"],
+                ]]
+                # 分兩段寫入：G 與 I:O，中間 H 不動。
+                memo.with_retry(ws.update, f"G{idx}:G{idx}", [[summary]], value_input_option="RAW")
+                memo.with_retry(ws.update, f"I{idx}:O{idx}", [values[0][1:]], value_input_option="RAW")
+                used_order_nos.add(c["order_no"])
+                result["success"] += 1
+                result["updated_orders"] += 1
+                log(f"✅ 第{idx}列：{match_type} → {c['order_no']} {c['name']} ${c['amount']}")
+
+            elif len(matches) > 1:
+                text = "多筆候選：" + "、".join(f"{c['order_no']} {c['name']}" for c in matches[:5])
+                memo.with_retry(ws.update_cell, idx, COL_SUMMARY, text)
+                result["ambiguous"] += 1
+                result["failed"] += 1
+                result["errors"].append(f"第{idx}列：{text}")
+                log(f"⚠️ 第{idx}列：{text}")
+
+            else:
+                text = "待人工確認"
+                if len(amount_candidates) > 1:
+                    text = f"待人工確認：同金額候選 {len(amount_candidates)} 筆"
+                elif len(amount_candidates) == 1:
+                    c = amount_candidates[0]
+                    text = f"待人工確認：同金額候選 {c['order_no']} {c['name']}"
+                memo.with_retry(ws.update_cell, idx, COL_SUMMARY, text)
+                result["unmatched"] += 1
+                result["failed"] += 1
+                result["errors"].append(f"第{idx}列：{text}")
+                log(f"❌ 第{idx}列：{text}")
+
+        except Exception as e:
+            msg = f"❌ 第{idx}列配對失敗：{e}"
+            log(msg)
+            result["failed"] += 1
+            result["errors"].append(msg)
+
+    log("===== 自動配對完成 =====")
+    return result
+
 # -----------------------------------------------------------------------------
 # /ATM-list：查詢「訂單統計表」勾選 + 待付款 + ATM 付款方式 的訂單清單，
 # 整理成 訂單服務年月｜訂單編號｜客戶名稱｜總金額扣車馬費，貼到 ATM 對帳工作表。
