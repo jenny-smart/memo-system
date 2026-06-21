@@ -1,4 +1,4 @@
-# memoapp_v10.py
+# memoapp_v11.py
 # -*- coding: utf-8 -*-
 import streamlit as st
 import re
@@ -2256,33 +2256,11 @@ def apply_time_change_label(row: dict, scenario: str, timing: str) -> dict:
 
 
 
-def apply_refund_four_workday_fee(order: dict, fee_info: dict) -> dict:
-    """異動費待退款：服務前 4 個工作天以上仍收 5% 異動費。"""
-    info = dict(fee_info or {})
-    workdays = int(info.get("workdays", 0) or 0)
-
-    if workdays >= 4:
-        total = int(round(float(order.get("total", 0) or 0)))
-        change_fee = round(total * 0.05)
-        info.update({
-            "tier": "four_plus_refund_5_percent",
-            "change_fee": change_fee,
-            "billing_units": None,
-            "rate_amount": None,
-            "rate_percent": 5,
-            "calc_note": f"服務前{workdays}個工作天異動，退款情境收 5% 異動費：總金額{total} × 5% = ${change_fee}",
-        })
-
-    return info
-
-
-def apply_refund_j_note_for_four_workdays(row: dict, fee_info: dict) -> dict:
-    """讓 J 欄清楚顯示 4 個工作天以上退款仍收 5% 異動費。"""
-    workdays = int((fee_info or {}).get("workdays", 0) or 0)
-    if workdays >= 4 and (fee_info or {}).get("tier") == "four_plus_refund_5_percent":
-        change_fee = _format_money_for_ui((fee_info or {}).get("change_fee", 0))
-        row["J"] = f"服務前{workdays}個工作天異動，收5%異動費${change_fee}"
-    return row
+def _order_money(order: dict, key: str, default: int = 0) -> int:
+    try:
+        return int(round(float((order or {}).get(key, default) or 0)))
+    except Exception:
+        return default
 
 
 def _format_money_for_ui(amount) -> str:
@@ -2290,6 +2268,87 @@ def _format_money_for_ui(amount) -> str:
         return str(int(round(float(amount or 0))))
     except Exception:
         return str(amount or "")
+
+
+def _refund_rate_by_workdays(workdays: int) -> int:
+    if workdays >= 4:
+        return 5
+    if workdays <= 1:
+        return 50
+    return 30
+
+
+def apply_refund_fee_on_service_amount(order: dict, fee_info: dict) -> dict:
+    """
+    異動費待退款專用：
+    退款比例一律以「服務費 = 總金額 - 車馬費」計算，不用總金額直接乘。
+    4 個工作天以上收 5%；2-3 個工作天收 30%；0-1 個工作天收 50%。
+    """
+    info = dict(fee_info or {})
+    workdays = int(info.get("workdays", 0) or 0)
+
+    # 儲值金客保留 change_order.py 原本依時數/人數/單位的計算方式；退款金額仍由 change_order.py 扣車馬費後處理。
+    if (order or {}).get("payway") == "儲值金":
+        return info
+
+    total = _order_money(order, "total", 0)
+    travel_fee = _order_money(order, "travel_fee", 0)
+    service_amount = max(total - travel_fee, 0)
+    rate_percent = _refund_rate_by_workdays(workdays)
+    change_fee = round(service_amount * rate_percent / 100)
+    refund_amount = max(service_amount - change_fee, 0)
+
+    info.update({
+        "tier": f"refund_{rate_percent}_percent",
+        "change_fee": change_fee,
+        "billing_units": None,
+        "rate_amount": None,
+        "rate_percent": rate_percent,
+        "service_amount": service_amount,
+        "travel_fee": travel_fee,
+        "refund_amount": refund_amount,
+        "calc_note": (
+            f"服務前{workdays}個工作天異動，退款情境收 {rate_percent}% 異動費："
+            f"總金額{total} - 車馬費{travel_fee} = 服務費{service_amount}；"
+            f"服務費{service_amount} × {rate_percent}% = 異動費${change_fee}；"
+            f"退款${refund_amount}"
+        ),
+    })
+    return info
+
+
+def apply_refund_j_note(row: dict, fee_info: dict) -> dict:
+    """讓 J 欄同時顯示異動費與退款金額。"""
+    workdays = int((fee_info or {}).get("workdays", 0) or 0)
+    rate_percent = (fee_info or {}).get("rate_percent")
+    change_fee = _format_money_for_ui((fee_info or {}).get("change_fee", row.get("_change_fee", 0)))
+    refund_amount = _format_money_for_ui(row.get("_refund_amount", row.get("_calc_amount", 0)))
+
+    if rate_percent:
+        row["J"] = f"服務前{workdays}個工作天異動，收{rate_percent}%異動費${change_fee}，退款${refund_amount}"
+    else:
+        row["J"] = f"服務前{workdays}個工作天異動，收異動費${change_fee}，退款${refund_amount}"
+    return row
+
+def render_calc_amount_html(row: dict) -> str:
+    """試算卡片的金額顯示：退款情境拆出服務費、車馬費、異動費與退款金額。"""
+    status = str(row.get("B", ""))
+    if status == "待退款":
+        service_amount = row.get("_service_amount", "")
+        travel_fee = row.get("_travel_fee", "")
+        change_fee = row.get("_change_fee", "")
+        refund_amount = row.get("_refund_amount", row.get("_calc_amount", ""))
+        parts = []
+        if service_amount != "":
+            parts.append(f"<b>服務費基礎：</b>${service_amount}")
+        if travel_fee != "":
+            parts.append(f"<b>車馬費：</b>${travel_fee}")
+        if change_fee != "":
+            parts.append(f"<b>扣除異動費：</b>${change_fee}")
+        parts.append(f"<b>退款金額：</b>${refund_amount}")
+        return "<br>".join(parts) + "<br>"
+    return f"<b>試算金額：</b>${row.get('_calc_amount','')}<br>"
+
 
 def render_change_order_stage_a():
     step("3", "選擇查詢方式，查詢目前已付款未服務訂單")
@@ -2527,12 +2586,12 @@ def render_change_order_stage_a():
                         service_date=service_date_input
                     )
                 else:
-                    fee_info = apply_refund_four_workday_fee(order, fee_info)
+                    fee_info = apply_refund_fee_on_service_amount(order, fee_info)
                     row = change_order.build_refund_row(
                         order, fee_info, service_note, customer_type=customer_type,
                         service_date=service_date_input
                     )
-                    row = apply_refund_j_note_for_four_workdays(row, fee_info)
+                    row = apply_refund_j_note(row, fee_info)
                 calc_rows.append(row)
 
             st.session_state.co_calc_rows = calc_rows
@@ -2560,7 +2619,7 @@ def render_change_order_stage_a():
                 <div class="preview-sub">
                     <b>類型：</b>{row.get('C','')}　<b>狀態：</b>{row.get('B','')}<br>
                     <b>原服務時間：</b>{row.get('I','')}<br>
-                    <b>試算金額：</b>${row.get('_calc_amount','')}<br>
+                    {render_calc_amount_html(row)}
                     <b>K 欄後台備註：</b>{row.get('K','')}<br>
                     <b>計算依據：</b>{row.get('_calc_note','')}
                 </div>
