@@ -1428,7 +1428,7 @@ def render_atm_auto_match_mode():
         unsafe_allow_html=True
     )
     st.markdown(
-        '<div class="warn-strip">⚠️ 不可只靠金額唯一自動配對；必須有末碼、姓名/備註或時間相符依據；若符合需確認、非訂單收入或疑似拆單規則，會先預填 I~O、P 欄台北時間，並在 T 欄標示狀態；多筆或找不到時只顯示 LOG，不會修改 G 欄。</div>',
+        '<div class="warn-strip">⚠️ 不可只靠金額唯一自動配對；必須有末碼、姓名/備註或時間相符依據；若符合需確認、非訂單收入或疑似拆單規則（但不能只靠金額或上方曾出現同名），會先預填 I~O、P 欄台北時間，並在 T 欄標示狀態；多筆或找不到時只顯示 LOG，不會修改 G 欄。</div>',
         unsafe_allow_html=True
     )
 
@@ -1453,7 +1453,7 @@ def render_atm_auto_match_mode():
         "允許需確認候選預填",
         value=True,
         key="atm_match_allow_review_prefill",
-        help="符合 M欄日期時間=B欄、F欄與K欄姓名相近、或K欄姓名已在上方對帳列表出現時，會先預填 I~O 並在 LOG 標示需確認。"
+        help="符合 M欄日期時間=B欄、F欄與K欄姓名相近、或F欄與K欄姓名相近或 M欄日期時間等於B欄時，會先預填 I~O 並在 LOG 標示需確認。"
     )
 
     execute_btn = st.button(
