@@ -1323,7 +1323,7 @@ def render_atm_reconcile_mode():
 
     st.markdown(
         '<div class="info-strip">完成「待付款清單查詢」與「配對銀行明細」後，再用這裡依序處理已確認的對帳列：搜尋訂單 → 按已付款 → 開立發票 → 發確認信，'
-        '完成後把付款時間 / 發票號碼回填到 P / Q 欄，並把 R 欄填上「已發送」。</div>',
+        '完成後回填 P=對帳完成時間、Q=付款時間、R=發票號碼、S=發確認信，並在 T 欄標示已更新系統。</div>',
         unsafe_allow_html=True
     )
     st.markdown(
@@ -1422,11 +1422,11 @@ def render_atm_auto_match_mode():
     st.markdown(
         '<div class="info-strip">先完成「待付款清單查詢」產生 I-L 欄，再貼上 A-F 銀行明細；M 欄可等客人告知末碼後填入。'
         '按下方按鈕會自動用「金額＋末碼」優先配對；若客人有寫匯款備註、沒有末碼，則改用「金額＋姓名/備註」配對。'
-        '成功配對只會寫回 I~O 欄，不會覆蓋 G 欄。</div>',
+        '成功配對會寫回 I~T 欄，不會覆蓋 G 欄；P~S 保留給系統對帳結果。</div>',
         unsafe_allow_html=True
     )
     st.markdown(
-        '<div class="warn-strip">⚠️ 唯一候選才會自動配對；多筆同金額或找不到時，只會顯示在 LOG，不會修改 G 欄。</div>',
+        '<div class="warn-strip">⚠️ 唯一候選才會自動配對；若符合需確認、非訂單收入或疑似拆單規則，會先預填 I~T 並在 T 欄標示狀態；多筆或找不到時只顯示 LOG，不會修改 G 欄。</div>',
         unsafe_allow_html=True
     )
 
@@ -1446,6 +1446,13 @@ def render_atm_auto_match_mode():
     with c4:
         st.markdown("<div style='height:26px'></div>", unsafe_allow_html=True)
         overwrite_existing = st.checkbox("覆蓋已配對列", value=False, key="atm_match_overwrite")
+
+    allow_review_prefill = st.checkbox(
+        "允許需確認候選預填",
+        value=True,
+        key="atm_match_allow_review_prefill",
+        help="符合 M欄日期時間=B欄、F欄與K欄姓名相近、或K欄姓名已在上方對帳列表出現時，會先預填 I~O 並在 LOG 標示需確認。"
+    )
 
     execute_btn = st.button(
         "🚀 配對銀行明細",
@@ -1485,6 +1492,7 @@ def render_atm_auto_match_mode():
                     overwrite_existing=overwrite_existing,
                     default_service_type=default_service_type.strip() or "清潔",
                     default_fee_type=default_fee_type.strip() or "服務費用",
+                    allow_review_prefill=allow_review_prefill,
                     ui_logger=atm_match_ui_log,
                 )
 
