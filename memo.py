@@ -728,6 +728,10 @@ def parse_edit_page(session, edit_url, phone=""):
             fields[name] = el.text or ""
         elif tag == "select":
             fields[name] = parse_select_value(el)
+            if name in ("progress", "progress_status"):
+                print("===== DEBUG SELECT HTML =====")
+                print(el.prettify())
+                print("===== parsed value =====", fields[name])
         else:
             input_type = (el.get("type") or "text").lower()
             if input_type in ("checkbox", "radio"):
