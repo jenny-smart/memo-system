@@ -29,6 +29,25 @@ except Exception:
 
 BASE_URL = "https://backend.lemonclean.com.tw"
 
+# 週六日與台灣國定假日不算工作日。此表先放 2026 年常用放假日；
+# 後續若跨年使用，只要補同格式日期即可。
+TAIWAN_PUBLIC_HOLIDAYS = {
+    date(2026, 1, 1),
+    date(2026, 2, 16),
+    date(2026, 2, 17),
+    date(2026, 2, 18),
+    date(2026, 2, 19),
+    date(2026, 2, 20),
+    date(2026, 2, 28),
+    date(2026, 4, 4),
+    date(2026, 4, 5),
+    date(2026, 5, 1),
+    date(2026, 6, 19),
+    date(2026, 9, 25),
+    date(2026, 10, 10),
+    date(2026, 12, 25),
+}
+
 
 # ============================================================
 # Google Sheet 連線（比照 memo.py 用 service account）
@@ -186,17 +205,30 @@ TYPE_DAMAGE_REFUND = "物損退款"
 # ============================================================
 
 def _parse_period_hours(period_text: str) -> float:
-    """ '14:00 - 18:00' -> 4.0 """
+    """ '14:00 - 18:00' -> 4.0；長時段扣 1 小時休息，例如 09:00-16:00 -> 6.0。 """
     m = re.search(r"(\d{1,2}):(\d{2})\s*-\s*(\d{1,2}):(\d{2})", period_text or "")
     if not m:
         return 0.0
     h1, m1, h2, m2 = map(int, m.groups())
-    return round(((h2 * 60 + m2) - (h1 * 60 + m1)) / 60, 2)
+    hours = ((h2 * 60 + m2) - (h1 * 60 + m1)) / 60
+    if hours >= 6:
+        hours -= 1
+    return round(max(hours, 0), 2)
+
+
+def _is_workday(d: date) -> bool:
+    return d.weekday() < 5 and d not in TAIWAN_PUBLIC_HOLIDAYS
+
+
+def _is_weekend_or_holiday(d: date) -> bool:
+    return not _is_workday(d)
 
 
 def _count_workdays_before(service_date: date, today: date = None) -> int:
     """
-    計算「服務日」與「今天」之間相隔的工作天數（不含週六日）。
+    計算今天到服務日前一日之間還剩幾個工作天（不含服務日）。
+    週六日與例假日不算工作日；若今天不是工作日，從下一個工作日開始算。
+    例：2026-06-21（日）異動 2026-06-23（二），只算 2026-06-22（一）= 1 天。
     當天/已過去 -> 0
     """
     today = today or date.today()
@@ -205,9 +237,9 @@ def _count_workdays_before(service_date: date, today: date = None) -> int:
     days = 0
     d = today
     while d < service_date:
-        d += timedelta(days=1)
-        if d.weekday() < 5:  # 0=Mon ... 4=Fri
+        if _is_workday(d):
             days += 1
+        d += timedelta(days=1)
     return days
 
 
@@ -312,9 +344,23 @@ def fetch_order_basic(keyword: str, session: requests.Session, ui_logger=None, b
     return result
 
 
+def _select_nearest_upcoming_paid_orders(parsed: list, today: date = None) -> list:
+    """從已解析訂單中挑出離今天最近、尚未服務、已付款的同日訂單。"""
+    today = today or date.today()
+    paid_with_date = [
+        p for p in parsed
+        if p.get("is_paid") and p.get("service_date") and p["service_date"] >= today
+    ]
+    if not paid_with_date:
+        return []
+
+    nearest_date = min(p["service_date"] for p in paid_with_date)
+    return [p for p in paid_with_date if p["service_date"] == nearest_date]
+
+
 def fetch_recent_paid_orders_by_phone(phone: str, session: requests.Session, ui_logger=None):
     """
-    依電話查詢 /purchase，找出「最近一次服務日期」且狀態為「已付款」的訂單。
+    依電話查詢 /purchase，找出「離今天最近、尚未服務」且狀態為「已付款」的訂單。
     若同一天有多筆（合併訂單），全部一起回傳。
     回傳 list of dict（內容同 fetch_order_basic 的結果），查無資料則回傳空 list。
     """
@@ -339,15 +385,13 @@ def fetch_recent_paid_orders_by_phone(phone: str, session: requests.Session, ui_
         if info:
             parsed.append(info)
 
-    paid_with_date = [p for p in parsed if p.get("is_paid") and p.get("service_date")]
-    if not paid_with_date:
-        log("⚠️ 查無「已付款」且有服務日期的訂單")
+    result = _select_nearest_upcoming_paid_orders(parsed)
+    if not result:
+        log("⚠️ 查無「已付款、尚未服務」且有服務日期的訂單")
         return []
 
-    latest_date = max(p["service_date"] for p in paid_with_date)
-    result = [p for p in paid_with_date if p["service_date"] == latest_date]
-
-    log(f"✅ 最近服務日期：{latest_date}，共找到 {len(result)} 筆已付款訂單"
+    nearest_date = result[0]["service_date"]
+    log(f"✅ 離今天最近的未服務日期：{nearest_date}，共找到 {len(result)} 筆已付款訂單"
         + ("（同日多筆，可能為合併訂單）" if len(result) > 1 else ""))
     return result
 
@@ -439,7 +483,7 @@ def calc_change_fee(order: dict, service_date: date, change_person: int = None,
     回傳 dict: {workdays, tier, change_fee, calc_note}
     """
     workdays = _count_workdays_before(service_date, today=today)
-    tier = "near" if workdays <= 1 else "far"   # near=服務前1工作天/當天, far=服務前2-3工作天
+    tier = "near" if workdays <= 1 else "far"   # near=服務前0-1工作天, far=服務前2-3工作天
 
     workday_note = _workday_note({"workdays": workdays})
 
@@ -545,18 +589,18 @@ def build_refund_row(order: dict, change_fee_info: dict, service_note: str,
 # ============================================================
 
 TIME_RATE_WEEKDAY = 600  # 平日每人時
-TIME_RATE_WEEKEND = 700  # 週末（六、日）每人時
+TIME_RATE_WEEKEND = 700  # 週末／例假日每人時
 
 
 def calc_time_change_fee(service_date: date, hours: float, person: int) -> dict:
     """
-    加時／減時金額試算：平日每人時 $600，週末（六、日）每人時 $700。
+    加時／減時金額試算：平日每人時 $600，週末／例假日每人時 $700。
     回傳 dict: {amount, rate, is_weekend, calc_note}
     """
-    is_weekend = service_date.weekday() >= 5 if service_date else False
+    is_weekend = _is_weekend_or_holiday(service_date) if service_date else False
     rate = TIME_RATE_WEEKEND if is_weekend else TIME_RATE_WEEKDAY
     amount = round((hours or 0) * (person or 0) * rate)
-    day_label = "週末" if is_weekend else "平日"
+    day_label = "週末/例假日" if is_weekend else "平日"
     calc_note = f"{day_label}：{hours}小時 × {person}人 × ${rate}/人時 = ${amount}"
     return {
         "amount": amount,
@@ -568,16 +612,33 @@ def calc_time_change_fee(service_date: date, hours: float, person: int) -> dict:
     }
 
 
+def calc_flat_person_hour_fee(hours: float, person: int, rate: int, label: str) -> dict:
+    """固定每人時費率試算，用於平日轉週末／週末轉平日情境。"""
+    amount = round((hours or 0) * (person or 0) * rate)
+    calc_note = f"{label}：{hours}小時 × {person}人 × ${rate}/人時 = ${amount}"
+    return {
+        "amount": amount,
+        "rate": rate,
+        "hours": hours,
+        "person": person,
+        "calc_note": calc_note,
+    }
+
+
+def _format_people_hours_fee_j(prefix: str, action: str, time_fee_info: dict) -> str:
+    person = _format_hours(time_fee_info.get("person"))
+    hours = _format_hours(time_fee_info.get("hours"))
+    amount = _format_money(time_fee_info.get("amount"))
+    return f"{prefix}{person}人{hours}小時，{action}服務費${amount}"
+
+
 def build_addtime_row(order: dict, time_fee_info: dict, service_note: str,
                        customer_type: str = "一般", service_date: date = None,
                        today: date = None) -> dict:
     """加時 → 異動服務收款（待收款），其餘欄位結構同異動待收款"""
     i_value = _format_service_datetime(service_date, order.get("period_text", ""))
     timing = _time_change_timing_label(service_date, today=today)
-    person = _format_hours(time_fee_info.get("person"))
-    hours = _format_hours(time_fee_info.get("hours"))
-    amount = _format_money(time_fee_info.get("amount"))
-    j_value = f"{timing}加時{person}人{hours}小時，待收服務費${amount}"
+    j_value = _format_people_hours_fee_j(f"{timing}加時", "待收", time_fee_info)
     return {
         "A": "清潔", "B": STATUS_PENDING_CHARGE, "C": TYPE_CHARGE,
         "E": (today or date.today()).strftime("%Y/%m/%d"),
@@ -596,16 +657,52 @@ def build_reducetime_row(order: dict, time_fee_info: dict, service_note: str,
     """減時 → 異動服務退款（待退款），其餘欄位結構同異動待退款"""
     i_value = _format_service_datetime(service_date, order.get("period_text", ""))
     timing = _time_change_timing_label(service_date, today=today)
-    person = _format_hours(time_fee_info.get("person"))
-    hours = _format_hours(time_fee_info.get("hours"))
-    amount = _format_money(time_fee_info.get("amount"))
-    j_value = f"{timing}減時{person}人{hours}小時，待退服務費${amount}"
+    j_value = _format_people_hours_fee_j(f"{timing}減時", "待退", time_fee_info)
     return {
         "A": "清潔", "B": STATUS_PENDING_REFUND, "C": TYPE_REFUND,
         "E": (today or date.today()).strftime("%Y/%m/%d"),
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value,
         "J": j_value,
+        "K": service_note or "",
+        "R": "信用卡" if order.get("payway") != "儲值金" else "儲值金",
+        "S": time_fee_info["amount"],
+        "X": order.get("invoice_no", ""),
+        "Y": "三聯" if order.get("carrier_type") == "三聯式" else "二聯",
+        "_calc_amount": time_fee_info["amount"],
+        "_calc_note": time_fee_info["calc_note"],
+    }
+
+
+def build_weekday_to_weekend_row(order: dict, time_fee_info: dict, service_note: str,
+                                  customer_type: str = "一般", service_date: date = None,
+                                  today: date = None) -> dict:
+    """異動平日轉週末 → 待收款，每人時 $600。"""
+    i_value = _format_service_datetime(service_date, order.get("period_text", ""))
+    j_value = _format_people_hours_fee_j("異動平日轉週末", "待收", time_fee_info)
+    return {
+        "A": "清潔", "B": STATUS_PENDING_CHARGE, "C": TYPE_CHARGE,
+        "E": (today or date.today()).strftime("%Y/%m/%d"),
+        "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
+        "I": i_value, "J": j_value,
+        "K": service_note or "",
+        "M": "", "N": time_fee_info["amount"], "O": "",
+        "_calc_amount": time_fee_info["amount"],
+        "_calc_note": time_fee_info["calc_note"],
+    }
+
+
+def build_weekend_to_weekday_row(order: dict, time_fee_info: dict, service_note: str,
+                                  customer_type: str = "一般", service_date: date = None,
+                                  today: date = None) -> dict:
+    """異動週末轉平日 → 待退款，每人時 $700。"""
+    i_value = _format_service_datetime(service_date, order.get("period_text", ""))
+    j_value = _format_people_hours_fee_j("異動週末轉平日", "待退", time_fee_info)
+    return {
+        "A": "清潔", "B": STATUS_PENDING_REFUND, "C": TYPE_REFUND,
+        "E": (today or date.today()).strftime("%Y/%m/%d"),
+        "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
+        "I": i_value, "J": j_value,
         "K": service_note or "",
         "R": "信用卡" if order.get("payway") != "儲值金" else "儲值金",
         "S": time_fee_info["amount"],
