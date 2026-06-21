@@ -1794,12 +1794,12 @@ SCENARIO_OPTIONS = [
 
 
 def render_change_order_stage_a():
-    step("3", "選擇查詢方式，查詢最近一次已付款未服務訂單")
+    step("3", "選擇查詢方式，查詢目前已付款未服務訂單")
 
     st.markdown(
-        '<div class="info-strip">輸入電話查詢，會找出「離今天最近、尚未服務」且狀態為「已付款」的訂單；'
-        '若同一天有多筆（可能是合併訂單），會全部列出讓您勾選。'
-        '也可以切換成「訂單編號」直接指定單一筆。選好訂單後，再往下做異動判斷'
+        '<div class="info-strip">輸入電話查詢，會列出目前「已付款且尚未服務」的訂單，並依服務日期由近到遠排序。'
+        '也可以切換成「訂單編號」直接指定單一筆。選好訂單後，再往下做異動判斷；'
+        '若是平日轉週末或週末轉平日，請選擇對應互轉情境計算每人時差額。'
         '（車馬費／異動／加時／減時／客訴／物損）。</div>',
         unsafe_allow_html=True
     )
@@ -1849,7 +1849,7 @@ def render_change_order_stage_a():
                 session = get_session(ui_logger=co_log)
 
                 if query_by == "電話":
-                    orders = change_order.fetch_recent_paid_orders_by_phone(
+                    orders = change_order.fetch_upcoming_paid_orders_by_phone(
                         keyword_input.strip(), session=session, ui_logger=co_log
                     )
                 else:
@@ -1872,7 +1872,7 @@ def render_change_order_stage_a():
         return
 
     st.markdown("---")
-    step("4", "選擇要異動的訂單（可複選，同日合併訂單可一起套用）")
+    step("4", "目前已付款未服務的訂單列表")
 
     selected_orders = []
     for o in orders:
@@ -1970,8 +1970,8 @@ def render_change_order_stage_a():
                     time_fee_info = change_order.calc_flat_person_hour_fee(
                         hours=order.get("service_hours", 0),
                         person=order.get("cleaner_count", 0),
-                        rate=change_order.TIME_RATE_WEEKDAY,
-                        label="平日每人時",
+                        rate=change_order.TIME_RATE_DAY_TYPE_DIFF,
+                        label="平日轉週末每人時差額",
                     )
                     row = change_order.build_weekday_to_weekend_row(
                         order, time_fee_info, service_note, customer_type=customer_type,
@@ -1984,8 +1984,8 @@ def render_change_order_stage_a():
                     time_fee_info = change_order.calc_flat_person_hour_fee(
                         hours=order.get("service_hours", 0),
                         person=order.get("cleaner_count", 0),
-                        rate=change_order.TIME_RATE_WEEKEND,
-                        label="週末每人時",
+                        rate=change_order.TIME_RATE_DAY_TYPE_DIFF,
+                        label="週末轉平日每人時差額",
                     )
                     row = change_order.build_weekend_to_weekday_row(
                         order, time_fee_info, service_note, customer_type=customer_type,
