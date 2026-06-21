@@ -469,7 +469,7 @@ def auto_match_bank_rows(
             note = memo.safe_cell(row, COL_NOTE)
             current_order_no = memo.safe_cell(row, COL_MATCH_ORDER_NO)
 
-            if income is None or not str(note).strip():
+            if income is None:
                 continue
 
             result["processed"] += 1
@@ -500,8 +500,10 @@ def auto_match_bank_rows(
             elif len(name_matches) > 1:
                 matches = name_matches
                 match_type = "備註姓名+金額"
+            elif len(amount_candidates) == 1:
+                matches = amount_candidates
+                match_type = "唯一金額"
             else:
-                # 若同金額只有一筆尚未配對，保守提示人工確認，不直接自動配。
                 matches = []
 
             if len(matches) == 1:
@@ -519,8 +521,7 @@ def auto_match_bank_rows(
                     c["service_type"],
                     c["fee_type"],
                 ]]
-                # 分兩段寫入：G 與 I:O，中間 H 不動。
-                memo.with_retry(ws.update, f"G{idx}:G{idx}", [[summary]], value_input_option="RAW")
+                # 僅寫入 I:O，不覆蓋 G 欄
                 memo.with_retry(ws.update, f"I{idx}:O{idx}", [values[0][1:]], value_input_option="RAW")
                 used_order_nos.add(c["order_no"])
                 result["success"] += 1
@@ -529,7 +530,6 @@ def auto_match_bank_rows(
 
             elif len(matches) > 1:
                 text = "多筆候選：" + "、".join(f"{c['order_no']} {c['name']}" for c in matches[:5])
-                memo.with_retry(ws.update_cell, idx, COL_SUMMARY, text)
                 result["ambiguous"] += 1
                 result["failed"] += 1
                 result["errors"].append(f"第{idx}列：{text}")
@@ -542,7 +542,6 @@ def auto_match_bank_rows(
                 elif len(amount_candidates) == 1:
                     c = amount_candidates[0]
                     text = f"待人工確認：同金額候選 {c['order_no']} {c['name']}"
-                memo.with_retry(ws.update_cell, idx, COL_SUMMARY, text)
                 result["unmatched"] += 1
                 result["failed"] += 1
                 result["errors"].append(f"第{idx}列：{text}")
