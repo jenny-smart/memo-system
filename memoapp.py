@@ -335,7 +335,6 @@ DEFAULT_STATE = {
     "shift_dry_run_result": None,
     "lemon_candidate": None,
     "atm_result": None,
-    "atm_match_result": None,
     "atm_list_rows": None,
     "atm_list_paste_result": None,
     "clear_person_result": None,
@@ -1304,30 +1303,30 @@ def render_lemon_ren_section():
 def render_atm_section():
     atm_mode = st.radio(
         "",
-        ["待付款清單查詢（/ATM-list）", "配對銀行明細", "更新系統對帳"],
+        ["對帳執行", "待付款清單查詢（/ATM-list）", "自動配對銀行明細"],
         horizontal=True,
         label_visibility="collapsed",
         key="atm_mode",
     )
 
-    if atm_mode.startswith("待付款清單查詢"):
-        render_atm_list_mode()
-    elif atm_mode.startswith("配對銀行明細"):
-        render_atm_auto_match_mode()
-    else:
+    if atm_mode == "對帳執行":
         render_atm_reconcile_mode()
+    elif atm_mode == "待付款清單查詢（/ATM-list）":
+        render_atm_list_mode()
+    else:
+        render_atm_auto_match_mode()
 
 
 def render_atm_reconcile_mode():
-    step("5", "更新系統對帳")
+    step("3", "設定要處理的 ATM 對帳列")
 
     st.markdown(
-        '<div class="info-strip">完成「待付款清單查詢」與「配對銀行明細」後，再用這裡依序處理已確認的對帳列：搜尋訂單 → 按已付款 → 開立發票 → 發確認信，'
+        '<div class="info-strip">會依序對每一列：搜尋訂單 → 按已付款 → 開立發票 → 發確認信，'
         '完成後把付款時間 / 發票號碼回填到 P / Q 欄，並把 R 欄填上「已發送」。</div>',
         unsafe_allow_html=True
     )
     st.markdown(
-        '<div class="warn-strip">⚠️ 這是最後一步系統更新；三個動作（尤其是發確認信）都是「點了就送出」，沒有預覽機制，輸入列號後按執行就會直接全部跑，請務必先確認列號正確再送出。</div>',
+        '<div class="warn-strip">⚠️ 這三個動作（尤其是發確認信）都是「點了就送出」，沒有預覽機制，輸入列號後按執行就會直接全部跑，請務必先確認列號正確再送出。</div>',
         unsafe_allow_html=True
     )
 
@@ -1378,14 +1377,14 @@ def render_atm_reconcile_mode():
 
     atm_result_container = st.container()
 
-    if st.session_state.get("atm_result") is not None:
+    if st.session_state.atm_result is not None:
         render_atm_result(st.session_state.atm_result, atm_result_container)
 
     if execute_btn:
         try:
             st.session_state.logs = []
             st.session_state.atm_result = None
-            atm_ui_log(f"===== 開始更新系統對帳（{region}）=====")
+            atm_ui_log(f"===== 開始處理 ATM 對帳（{region}）=====")
 
             if not (do_mark_paid or do_issue_invoice or do_send_mail):
                 raise ValueError("請至少勾選一項要執行的動作")
@@ -1417,10 +1416,10 @@ def render_atm_reconcile_mode():
 
 
 def render_atm_auto_match_mode():
-    step("4", "配對銀行明細")
+    step("3", "自動配對銀行明細")
 
     st.markdown(
-        '<div class="info-strip">先完成「待付款清單查詢」產生 I-L 欄，再貼上 A-F 銀行明細；M 欄可等客人告知末碼後填入。'
+        '<div class="info-strip">A-F 欄貼銀行明細、I-L 欄由「待付款清單查詢」貼入、M 欄填客人告知末碼後，'
         '按下方按鈕會自動用「金額＋末碼」優先配對；若客人有寫匯款備註、沒有末碼，則改用「金額＋姓名/備註」配對。'
         '成功配對會寫回 G 欄摘要與 I~O 欄。</div>',
         unsafe_allow_html=True
@@ -1446,7 +1445,7 @@ def render_atm_auto_match_mode():
         overwrite_existing = st.checkbox("覆蓋已配對列", value=False, key="atm_match_overwrite")
 
     execute_btn = st.button(
-        "🚀 配對銀行明細",
+        "🚀 自動配對",
         use_container_width=True,
         disabled=not st.session_state.credentials_ready,
     )
@@ -1467,14 +1466,14 @@ def render_atm_auto_match_mode():
             pass
 
     result_container_local = st.container()
-    if st.session_state.get("atm_match_result") is not None:
+    if st.session_state.atm_match_result is not None:
         render_atm_result(st.session_state.atm_match_result, result_container_local)
 
     if execute_btn:
         try:
             st.session_state.logs = []
             st.session_state.atm_match_result = None
-            atm_match_ui_log(f"===== 開始配對銀行明細（{region}）=====")
+            atm_match_ui_log(f"===== 開始自動配對銀行明細（{region}）=====")
 
             with st.spinner("配對中，請稍候…"):
                 result = atm.auto_match_bank_rows(
@@ -1485,7 +1484,7 @@ def render_atm_auto_match_mode():
                     ui_logger=atm_match_ui_log,
                 )
 
-            atm_match_ui_log("===== 配對銀行明細完成 =====")
+            atm_match_ui_log("===== 自動配對完成 =====")
             st.session_state.atm_match_result = result
             render_atm_result(result, result_container_local)
 
@@ -1500,7 +1499,7 @@ def render_atm_auto_match_mode():
 
 
 def render_atm_list_mode():
-    step("3", "待付款清單查詢")
+    step("3", "查詢 ATM 待付款名單")
 
     st.markdown(
         '<div class="info-strip">會用「訂購日期-迄」「勾選訂單統計表」「付款狀態：待付款」「付款方式：ATM」這組條件去查詢，'
@@ -1564,7 +1563,7 @@ def render_atm_list_mode():
             atm_list_ui_log(f"❌ 查詢失敗：{e}")
             st.error(str(e))
 
-    rows = st.session_state.get("atm_list_rows")
+    rows = st.session_state.atm_list_rows
 
     if rows is not None:
         st.markdown("---")
@@ -1610,11 +1609,11 @@ def render_atm_list_mode():
                     atm_list_ui_log(f"❌ 貼上失敗：{e}")
                     st.error(str(e))
 
-    if st.session_state.get("atm_list_paste_result") is not None:
+    if st.session_state.atm_list_paste_result is not None:
         st.markdown("---")
         step("5", "貼上結果")
 
-        pr = st.session_state.get("atm_list_paste_result")
+        pr = st.session_state.atm_list_paste_result
         if pr.get("errors"):
             st.error("；".join(pr["errors"]))
         else:
