@@ -959,7 +959,7 @@ def build_preview_row(target: Dict, history_items: List[Dict]) -> Dict:
             "source_purchase_status_name": "",
             "source_status_name": "",
             "source_notice_exists": True,
-            "source_notice_preview": "（新成單，將帶入固定提醒文字）",
+            "source_notice_preview": DEFAULT_NEW_ORDER_NOTICE,
             "can_autofill": True,
             "is_new_order": True,
         }
