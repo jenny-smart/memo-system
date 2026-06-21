@@ -1,4 +1,4 @@
-# memoapp.py
+# memoapp_v6.py
 # -*- coding: utf-8 -*-
 import streamlit as st
 import re
@@ -793,7 +793,7 @@ MAIN_SECTION_HELP = {
         <b>支援項目</b>
         <ul>
             <li>車馬費、異動費</li>
-            <li>加時、減時</li>
+            <li>服務前加時、服務前減時</li>\n<li>服務後加時、服務後減時</li>
             <li>退款、客訴退款、物損退款</li>
         </ul>
         <b>建議流程</b>
@@ -2075,7 +2075,7 @@ def render_clear_shift_section():
 
 
 # ============================================================
-# 功能六：清潔異動（車馬費／異動服務收款／異動服務退款／加時／減時）
+# 功能六：清潔異動（車馬費／異動服務收款／異動服務退款／服務前後加減時）
 # ============================================================
 
 def render_change_order_section():
@@ -2130,18 +2130,58 @@ SCENARIO_OPTIONS = [
     "異動費(待退款)",
     "異動平日轉週末(待收款)",
     "異動週末轉平日(待退款)",
-    "加時(待收款)",
-    "減時(待退款)",
+    "服務前加時(待收款)",
+    "服務前減時(待退款)",
+    "服務後加時(待收款)",
+    "服務後減時(待退款)",
     "客訴(待退款)",
     "物損(待退款)",
 ]
+
+TIME_CHANGE_HELP = """
+<div class="info-strip">
+<b>加減時說明</b>
+<ul>
+<li><b>服務前加時：</b>服務前異動，補收加時費</li>
+<li><b>服務前減時：</b>服務前異動，退減時費</li>
+<li><b>服務後加時：</b>服務完成後補登加時收款</li>
+<li><b>服務後減時：</b>服務完成後補登減時退款</li>
+</ul>
+</div>
+"""
+
+
+def apply_time_change_label(row: dict, scenario: str) -> dict:
+    """依 V6 情境修正 J 欄文字，避免服務後加減時被顯示成「服務前」或「當天」。"""
+    label_map = {
+        "服務前加時(待收款)": ("服務前加時", "待收"),
+        "服務前減時(待退款)": ("服務前減時", "待退"),
+        "服務後加時(待收款)": ("服務後加時", "待收"),
+        "服務後減時(待退款)": ("服務後減時", "待退"),
+    }
+    if scenario not in label_map:
+        return row
+
+    prefix, action = label_map[scenario]
+    j = str(row.get("J", ""))
+    for old in ("服務前加時", "當天加時", "服務後加時"):
+        j = j.replace(old, prefix)
+    for old in ("服務前減時", "當天減時", "服務後減時"):
+        j = j.replace(old, prefix)
+    if j:
+        row["J"] = j
+
+    note = str(row.get("_calc_note", ""))
+    if note:
+        row["_calc_note"] = f"{prefix}，{note}"
+    return row
 
 
 def render_change_order_stage_a():
     step("3", "選擇查詢方式，查詢目前已付款未服務訂單")
 
     st.markdown(
-        '<div class="info-strip">\n<b>操作流程</b>\n<ol>\n<li>用電話或訂單編號查詢</li>\n<li>勾選要處理的訂單</li>\n<li>選擇異動情境</li>\n<li>試算金額</li>\n</ol>\n<b>支援情境</b>\n<ul>\n<li>車馬費、異動費</li>\n<li>加時、減時</li>\n<li>客訴、物損</li>\n</ul>\n</div>',
+        '<div class="info-strip">\n<b>操作流程</b>\n<ol>\n<li>用電話或訂單編號查詢</li>\n<li>勾選要處理的訂單</li>\n<li>選擇異動情境</li>\n<li>試算金額</li>\n</ol>\n<b>支援情境</b>\n<ul>\n<li>車馬費、異動費</li>\n<li>服務前加時、服務前減時</li>\n<li>服務後加時、服務後減時</li>\n<li>客訴、物損</li>\n</ul>\n</div>',
         unsafe_allow_html=True
     )
 
@@ -2240,7 +2280,20 @@ def render_change_order_stage_a():
     with c1:
         scenario = st.radio("情境", SCENARIO_OPTIONS, key="co_scenario")
 
-        is_time_change = scenario in ("加時(待收款)", "減時(待退款)")
+        if scenario in (
+            "服務前加時(待收款)",
+            "服務前減時(待退款)",
+            "服務後加時(待收款)",
+            "服務後減時(待退款)",
+        ):
+            st.markdown(TIME_CHANGE_HELP, unsafe_allow_html=True)
+
+        is_time_change = scenario in (
+            "服務前加時(待收款)",
+            "服務前減時(待退款)",
+            "服務後加時(待收款)",
+            "服務後減時(待退款)",
+        )
         is_manual_refund = scenario in ("客訴(待退款)", "物損(待退款)")
 
         change_hours = None
@@ -2285,7 +2338,7 @@ def render_change_order_stage_a():
                     calc_rows.append(row)
                     continue
 
-                if scenario == "加時(待收款)":
+                if scenario in ("服務前加時(待收款)", "服務後加時(待收款)"):
                     time_fee_info = change_order.calc_time_change_fee(
                         service_date_input, hours=change_hours, person=change_person
                     )
@@ -2293,10 +2346,11 @@ def render_change_order_stage_a():
                         order, time_fee_info, service_note, customer_type=customer_type,
                         service_date=service_date_input
                     )
+                    row = apply_time_change_label(row, scenario)
                     calc_rows.append(row)
                     continue
 
-                if scenario == "減時(待退款)":
+                if scenario in ("服務前減時(待退款)", "服務後減時(待退款)"):
                     time_fee_info = change_order.calc_time_change_fee(
                         service_date_input, hours=change_hours, person=change_person
                     )
@@ -2304,6 +2358,7 @@ def render_change_order_stage_a():
                         order, time_fee_info, service_note, customer_type=customer_type,
                         service_date=service_date_input
                     )
+                    row = apply_time_change_label(row, scenario)
                     calc_rows.append(row)
                     continue
 
