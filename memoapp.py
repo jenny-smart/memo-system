@@ -1422,11 +1422,11 @@ def render_atm_auto_match_mode():
     st.markdown(
         '<div class="info-strip">先完成「待付款清單查詢」產生 I-L 欄，再貼上 A-F 銀行明細；M 欄可等客人告知末碼後填入。'
         '按下方按鈕會自動用「金額＋末碼」優先配對；若客人有寫匯款備註、沒有末碼，則改用「金額＋姓名/備註」配對。'
-        '成功配對會寫回 G 欄摘要與 I~O 欄。</div>',
+        '成功配對只會寫回 I~O 欄，不會覆蓋 G 欄。</div>',
         unsafe_allow_html=True
     )
     st.markdown(
-        '<div class="warn-strip">⚠️ 唯一候選才會自動配對；多筆同金額或找不到時，只會在 G 欄標示「待人工確認」或「多筆候選」。</div>',
+        '<div class="warn-strip">⚠️ 唯一候選才會自動配對；多筆同金額或找不到時，只會顯示在 LOG，不會修改 G 欄。</div>',
         unsafe_allow_html=True
     )
 
@@ -1481,7 +1481,6 @@ def render_atm_auto_match_mode():
             with st.spinner("配對中，請稍候…"):
                 result = atm.auto_match_bank_rows(
                     region=region,
-                    row_spec=row_spec,
                     overwrite_existing=overwrite_existing,
                     default_service_type=default_service_type.strip() or "清潔",
                     default_fee_type=default_fee_type.strip() or "服務費用",
