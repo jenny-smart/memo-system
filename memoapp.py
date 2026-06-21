@@ -1325,7 +1325,7 @@ def render_atm_reconcile_mode():
 
     st.markdown(
         '<div class="info-strip">完成「待付款清單查詢」與「配對銀行明細」後，再用這裡依序處理已確認的對帳列：搜尋訂單 → 按已付款 → 開立發票 → 發確認信，'
-        '完成後回填 P=對帳完成時間、Q=付款時間、R=發票號碼、S=發確認信，並在 T 欄標示已更新系統。</div>',
+        '完成後回填 P=對帳完成時間（台北時間）、Q=付款時間、R=發票號碼、S=發確認信，並在 T 欄標示已更新系統。</div>',
         unsafe_allow_html=True
     )
     st.markdown(
@@ -1424,11 +1424,11 @@ def render_atm_auto_match_mode():
     st.markdown(
         '<div class="info-strip">先完成「待付款清單查詢」產生 I-L 欄，再貼上 A-F 銀行明細；M 欄可等客人告知末碼後填入。'
         '按下方按鈕會自動用「金額＋末碼」優先配對；若客人有寫匯款備註、沒有末碼，則改用「金額＋姓名/備註」配對。'
-        '成功配對會寫回 I~O 欄與 T 欄狀態，不會覆蓋 G 欄；P~S 保留給系統對帳結果。</div>',
+        '成功配對會寫回 I~O 欄、P 欄台北時間與 T 欄狀態；若 P/T 原為下拉選單會先清除該格驗證，不會覆蓋 G 欄；Q~S 保留給系統對帳結果。</div>',
         unsafe_allow_html=True
     )
     st.markdown(
-        '<div class="warn-strip">⚠️ 唯一候選才會自動配對；若符合需確認、非訂單收入或疑似拆單規則，會先預填 I~O 並在 T 欄標示狀態；多筆或找不到時只顯示 LOG，不會修改 G 欄。</div>',
+        '<div class="warn-strip">⚠️ 唯一候選才會自動配對；若符合需確認、非訂單收入或疑似拆單規則，會先預填 I~O、P 欄台北時間，並在 T 欄標示狀態；多筆或找不到時只顯示 LOG，不會修改 G 欄。</div>',
         unsafe_allow_html=True
     )
 
