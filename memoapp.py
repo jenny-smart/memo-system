@@ -577,6 +577,7 @@ def render_preview_blocks(rows):
             source_purchase_status_name = row.get("source_purchase_status_name", "")
             source_status_name = row.get("source_status_name", "")
             source_notice_preview = row.get("source_notice_preview", "")
+            source_notice_preview_html = source_notice_preview.replace("\n", "<br>") if source_notice_preview else ""
             can_autofill = row.get("can_autofill", False)
             is_new_order = row.get("is_new_order", False)
 
@@ -602,7 +603,7 @@ def render_preview_blocks(rows):
                     <b>來源服務日期：</b>{source_service_date or "-"}　
                     <b>來源付款狀態：</b>{source_purchase_status_name or "-"}　
                     <b>來源服務狀態：</b>{source_status_name or "-"}<br>
-                    <b>來源備註：</b>{source_notice_preview or "無"}
+                    <b>來源備註：</b>{source_notice_preview_html or "無"}
                 </div>
                 <div class="preview-sub" style="margin-top:8px;">
                     <b>建議：</b>{suggestion_text}
