@@ -21,6 +21,7 @@ ATM 對帳自動化模組
 import json
 import re
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from typing import Dict, List, Optional, Callable
 from difflib import SequenceMatcher
 
@@ -60,7 +61,37 @@ def make_logger(ui_logger: Optional[Callable[[str], None]] = None):
 
 
 def _now_text() -> str:
-    return datetime.now().strftime("%Y/%m/%d %H:%M:%S")
+    return datetime.now(ZoneInfo("Asia/Taipei")).strftime("%Y/%m/%d %H:%M:%S")
+
+
+def _clear_data_validation(ws, row: int, col_start: int, col_end: int):
+    """
+    清除指定列、指定欄位範圍的資料驗證（下拉選單）。
+    col_start / col_end are 1-based and inclusive.
+    """
+    try:
+        sheet_id = ws.id
+        body = {
+            "requests": [
+                {
+                    "repeatCell": {
+                        "range": {
+                            "sheetId": sheet_id,
+                            "startRowIndex": row - 1,
+                            "endRowIndex": row,
+                            "startColumnIndex": col_start - 1,
+                            "endColumnIndex": col_end,
+                        },
+                        "cell": {"dataValidation": None},
+                        "fields": "dataValidation",
+                    }
+                }
+            ]
+        }
+        memo.with_retry(ws.spreadsheet.batch_update, body)
+    except Exception:
+        # 清除下拉選單失敗時不阻斷主流程，後續 update 若失敗會回報原錯誤。
+        pass
 
 
 # -----------------------------------------------------------------------------
@@ -314,6 +345,9 @@ def process_atm_rows(
                 updates.append((COL_MAIL_STATUS, "已發送"))
             updates.append((COL_RECON_STATUS, "已更新系統"))
             updates.append((COL_RECON_STATUS, "已更新系統"))
+
+            # P:T 會寫入時間、發票號碼、狀態；若原本是下拉選單，先清除資料驗證。
+            _clear_data_validation(ws, r, COL_RECONCILED_AT, COL_RECON_STATUS)
 
             for col, value in updates:
                 memo.with_retry(ws.update_cell, r, col, value)
@@ -692,6 +726,10 @@ def auto_match_bank_rows(
                 ]]
                 # 寫入 I:O，不覆蓋 G/H 欄；P:S 保留給系統對帳結果；T 欄寫狀態
                 memo.with_retry(ws.update, f"I{idx}:O{idx}", values, value_input_option="RAW")
+                # P 與 T 可能原本是下拉選單，先清除資料驗證再寫入時間/狀態。
+                _clear_data_validation(ws, idx, COL_RECONCILED_AT, COL_RECONCILED_AT)
+                _clear_data_validation(ws, idx, COL_RECON_STATUS, COL_RECON_STATUS)
+                memo.with_retry(ws.update_cell, idx, COL_RECONCILED_AT, _now_text())
                 memo.with_retry(ws.update_cell, idx, COL_RECON_STATUS, status_text)
 
                 source_row = int(c.get("row") or 0)
@@ -707,6 +745,7 @@ def auto_match_bank_rows(
                 else:
                     if source_row and source_row != idx:
                         memo.with_retry(ws.update, f"I{source_row}:O{source_row}", [["", "", "", "", "", "", ""]], value_input_option="RAW")
+                        _clear_data_validation(ws, source_row, COL_RECON_STATUS, COL_RECON_STATUS)
                         memo.with_retry(ws.update_cell, source_row, COL_RECON_STATUS, "")
                         log(f"↳ 已清空原候選列第{source_row}列 I:O 與 T")
                     log(f"✅ 第{idx}列：{match_type} → {c['order_no']} {c['name']} ${c['amount']}")
