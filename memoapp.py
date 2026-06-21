@@ -1481,6 +1481,7 @@ def render_atm_auto_match_mode():
             with st.spinner("配對中，請稍候…"):
                 result = atm.auto_match_bank_rows(
                     region=region,
+                    row_spec=row_spec.strip(),
                     overwrite_existing=overwrite_existing,
                     default_service_type=default_service_type.strip() or "清潔",
                     default_fee_type=default_fee_type.strip() or "服務費用",
