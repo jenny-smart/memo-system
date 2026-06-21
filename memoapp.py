@@ -1424,11 +1424,11 @@ def render_atm_auto_match_mode():
     st.markdown(
         '<div class="info-strip">先完成「待付款清單查詢」產生 I-L 欄，再貼上 A-F 銀行明細；M 欄可等客人告知末碼後填入。'
         '按下方按鈕會自動用「金額＋末碼」優先配對；若客人有寫匯款備註、沒有末碼，則改用「金額＋姓名/備註」配對。'
-        '成功配對會寫回 I~T 欄，不會覆蓋 G 欄；P~S 保留給系統對帳結果。</div>',
+        '成功配對會寫回 I~O 欄與 T 欄狀態，不會覆蓋 G 欄；P~S 保留給系統對帳結果。</div>',
         unsafe_allow_html=True
     )
     st.markdown(
-        '<div class="warn-strip">⚠️ 唯一候選才會自動配對；若符合需確認、非訂單收入或疑似拆單規則，會先預填 I~T 並在 T 欄標示狀態；多筆或找不到時只顯示 LOG，不會修改 G 欄。</div>',
+        '<div class="warn-strip">⚠️ 唯一候選才會自動配對；若符合需確認、非訂單收入或疑似拆單規則，會先預填 I~O 並在 T 欄標示狀態；多筆或找不到時只顯示 LOG，不會修改 G 欄。</div>',
         unsafe_allow_html=True
     )
 
