@@ -305,12 +305,14 @@ def process_atm_rows(
             invoice_no = purchase.get("invoice_no") or ""
 
             updates.append((COL_RECONCILED_AT, _now_text()))
+            updates.append((COL_RECONCILED_AT, _now_text()))
             if do_mark_paid and paid_at:
                 updates.append((COL_PAID_AT, paid_at))
             if do_issue_invoice and invoice_no:
                 updates.append((COL_INVOICE_NO, invoice_no))
             if do_send_mail:
                 updates.append((COL_MAIL_STATUS, "已發送"))
+            updates.append((COL_RECON_STATUS, "已更新系統"))
             updates.append((COL_RECON_STATUS, "已更新系統"))
 
             for col, value in updates:
