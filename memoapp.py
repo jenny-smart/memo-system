@@ -1570,14 +1570,38 @@ def render_assessment_section():
         st.session_state["assess_v2"] = "\n".join(v2_lines)
 
     if st.session_state.get("assess_v1"):
+        import json
+        import streamlit.components.v1 as components
+
         st.markdown("---")
         step("4", "版本一 — 含時數（至加總）")
-        st.text_area("版本一", value=st.session_state["assess_v1"], height=280, key="assess_v1_edit")
+        v1_edited = st.text_area("版本一", value=st.session_state["assess_v1"], height=280, key="assess_v1_edit")
+        components.html(f"""
+        <button onclick="navigator.clipboard.writeText({json.dumps(v1_edited)}).then(()=>{{
+            this.textContent='✅ 已複製！';
+            setTimeout(()=>this.textContent='複製版本一',1500);
+        }})"
+        style="background:#F5C518;border:none;border-radius:12px;padding:10px 20px;
+               font-weight:700;cursor:pointer;width:100%;font-size:15px;
+               font-family:'Noto Sans TC',sans-serif;">
+        複製版本一
+        </button>
+        """, height=48)
 
+        st.markdown("<div style='margin-top:1rem'></div>", unsafe_allow_html=True)
         step("5", "版本二 — 移除時數（含注意事項）")
-        st.text_area("版本二", value=st.session_state["assess_v2"], height=420, key="assess_v2_edit")
-
-        st.caption("內容可直接在上方編輯，再全選複製使用。")
+        v2_edited = st.text_area("版本二", value=st.session_state["assess_v2"], height=420, key="assess_v2_edit")
+        components.html(f"""
+        <button onclick="navigator.clipboard.writeText({json.dumps(v2_edited)}).then(()=>{{
+            this.textContent='✅ 已複製！';
+            setTimeout(()=>this.textContent='複製版本二',1500);
+        }})"
+        style="background:#F5C518;border:none;border-radius:12px;padding:10px 20px;
+               font-weight:700;cursor:pointer;width:100%;font-size:15px;
+               font-family:'Noto Sans TC',sans-serif;">
+        複製版本二
+        </button>
+        """, height=48)
 
 # ============================================================
 # 路由
