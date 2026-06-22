@@ -3,37 +3,23 @@
 """
 自動勾班模組
 
-對應後台頁面 cleaner1/{id}/shift?month=YYYY-MM 的實際結構：
-- 每天有四組「各自獨立」的 radio button group：
-    shift_{date}_all  (value: "6" 或 "8")
-    shift_{date}_1    (上午，value: "0830-1230" / "0900-1200" / "0900-1100")
-    shift_{date}_2    (下午，value: "1400-1800" / "1400-1700" / "1400-1600")
-    shift_{date}_3    (晚上，value: "1900-2100")
-  同一天的這四組可以同時被勾選（業務上通常不會，但程式層面沒有互斥）。
-- 「清」不是一個會送出的欄位，而是前端 JS 把當天四組 radio 全部取消勾選。
-  匯入檔遇到「清」時，代表要把該日期當天既有的四組勾選全部移除，
-  而不是新增什麼資料。
-- 判斷「目前已勾選」要看 radio 的 checked 屬性，不是看 value 是否存在
-  （因為每個選項本來就都有固定的 value，只是沒被勾選的話沒有 checked）。
-
-修正說明（2026-06）：
-- submit_shift_payload 加上 month 參數，POST 時帶 ?month=YYYY-MM，
-  與手動操作時瀏覽器送出的 URL 一致。
-- clear_person_shift_dates 在確認「當月有勾選要清」之後才送出，
-  若該月完全沒有勾選則直接略過，不送出空 payload。
+修正紀錄（2026-06）：
+1. get_shift_page_state 改為同時回傳所有 hidden input 欄位（含 _method 等），
+   讓 submit_shift_payload 能帶著這些欄位一起送出，符合 Laravel 的 method spoofing。
+2. submit_shift_payload 加上 month 參數，POST URL 帶 ?month=YYYY-MM。
+3. clear_person_shift_dates 確認當月有勾選才送出，無勾選直接略過。
 """
 import re
 from datetime import date, timedelta
-from typing import Dict, List, Optional, Callable
+from typing import Dict, List, Optional, Callable, Tuple
 
 import requests
 from bs4 import BeautifulSoup
 
-import memo  # 重用 memo.py 的 BASE_URL / login() / session_get / session_post 等
-
+import memo
 
 # -----------------------------------------------------------------------------
-# 類型 -> (slot 代碼, value) 對照表
+# 類型對照表
 # -----------------------------------------------------------------------------
 TYPE_MAP = {
     "全6": ("all", "6"),
@@ -48,28 +34,20 @@ TYPE_MAP = {
 }
 
 TYPE_DIGIT_MAP = {
-    "上4": "4",
-    "上3": "3",
-    "上2": "2",
-    "全6": "6",
-    "全8": "8",
-    "下2": "2",
-    "下3": "3",
-    "下4": "4",
+    "上4": "4", "上3": "3", "上2": "2",
+    "全6": "6", "全8": "8",
+    "下2": "2", "下3": "3", "下4": "4",
     "晚2": "2",
 }
 
 CLEAR_TYPE = "清"
 ALL_SLOTS = ["all", "1", "2", "3"]
 
-# -----------------------------------------------------------------------------
-# Slot 衝突規則
-# -----------------------------------------------------------------------------
 CONFLICT_MAP = {
     "all": {"1", "2"},
-    "1": {"all"},
-    "2": {"all"},
-    "3": set(),
+    "1":   {"all"},
+    "2":   {"all"},
+    "3":   set(),
 }
 
 
@@ -96,20 +74,12 @@ def make_logger(ui_logger: Optional[Callable[[str], None]] = None):
 # -----------------------------------------------------------------------------
 def parse_import_file(file_obj, filename: str) -> List[Dict]:
     import pandas as pd
-
     if filename.lower().endswith(".csv"):
         df = pd.read_csv(file_obj, dtype=str)
     else:
         df = pd.read_excel(file_obj, dtype=str)
 
-    df = df.rename(columns={
-        "地區": "area",
-        "日期": "date",
-        "類型": "type",
-        "時段": "period",
-        "名稱": "name",
-    })
-
+    df = df.rename(columns={"地區": "area", "日期": "date", "類型": "type", "時段": "period", "名稱": "name"})
     required = {"date", "type", "name"}
     missing = required - set(df.columns)
     if missing:
@@ -120,29 +90,17 @@ def parse_import_file(file_obj, filename: str) -> List[Dict]:
         date_val = str(r.get("date", "")).strip()
         type_val = str(r.get("type", "")).strip()
         name_val = str(r.get("name", "")).strip()
-
         if not date_val or not type_val or not name_val:
             continue
-
-        date_val = re.sub(r"[./]", "-", date_val)
-        date_val = date_val[:10]
-
-        rows.append({
-            "area": str(r.get("area", "")).strip(),
-            "date": date_val,
-            "type": type_val,
-            "name": name_val,
-        })
-
+        date_val = re.sub(r"[./]", "-", date_val)[:10]
+        rows.append({"area": str(r.get("area", "")).strip(), "date": date_val, "type": type_val, "name": name_val})
     return rows
 
 
 def group_rows_by_name_and_month(rows: List[Dict]) -> Dict[str, Dict[str, List[Dict]]]:
     grouped: Dict[str, Dict[str, List[Dict]]] = {}
     for row in rows:
-        name = row["name"]
-        month = row["date"][:7]
-        grouped.setdefault(name, {}).setdefault(month, []).append(row)
+        grouped.setdefault(row["name"], {}).setdefault(row["date"][:7], []).append(row)
     return grouped
 
 
@@ -154,17 +112,12 @@ _CLEANER_NAME_TO_ID_CACHE: Dict[str, str] = {}
 
 def build_cleaner_directory(session: requests.Session, force_refresh: bool = False) -> Dict[str, str]:
     global _CLEANER_NAME_TO_ID_CACHE
-
     if _CLEANER_NAME_TO_ID_CACHE and not force_refresh:
         return _CLEANER_NAME_TO_ID_CACHE
-
-    url = f"{memo.BASE_URL}/schedule"
-    r = memo.session_get(session, url)
+    r = memo.session_get(session, f"{memo.BASE_URL}/schedule")
     r.raise_for_status()
-
     soup = BeautifulSoup(r.text, "html.parser")
     select_el = soup.select_one("select#cleaner_id")
-
     directory = {}
     if select_el:
         for opt in select_el.select("option"):
@@ -172,77 +125,82 @@ def build_cleaner_directory(session: requests.Session, force_refresh: bool = Fal
             name = opt.get_text(strip=True)
             if value and value != "0" and name:
                 directory[name] = value
-
     _CLEANER_NAME_TO_ID_CACHE = directory
     return directory
 
 
 def search_cleaner1_by_keyword(session: requests.Session, keyword: str) -> Dict[str, str]:
-    url = f"{memo.BASE_URL}/cleaner1"
-    r = memo.session_get(session, url, params={"keyword": keyword})
+    r = memo.session_get(session, f"{memo.BASE_URL}/cleaner1", params={"keyword": keyword})
     r.raise_for_status()
-
     soup = BeautifulSoup(r.text, "html.parser")
     results = {}
-
     for tr in soup.select("table tbody tr"):
         tds = tr.find_all("td", recursive=False)
         if len(tds) < 2:
             continue
-
-        name_td = tds[1]
-        lines = name_td.get_text(separator="\n", strip=True).split("\n")
+        lines = tds[1].get_text(separator="\n", strip=True).split("\n")
         name = lines[0].strip() if lines else ""
-
         shift_link = tr.select_one('a[href*="/shift"]')
         if not name or not shift_link:
             continue
-
         m = re.search(r"/cleaner1/(\d+)/shift", shift_link.get("href", ""))
-        if not m:
-            continue
-
-        results[name] = m.group(1)
-
+        if m:
+            results[name] = m.group(1)
     return results
 
 
 def find_cleaner_id_by_name(session: requests.Session, name: str) -> Optional[str]:
     global _CLEANER_NAME_TO_ID_CACHE
-
     directory = build_cleaner_directory(session)
     if name in directory:
         return directory[name]
-
     try:
         found = search_cleaner1_by_keyword(session, name)
     except Exception:
         found = {}
-
     if found:
         _CLEANER_NAME_TO_ID_CACHE.update(found)
-
     return _CLEANER_NAME_TO_ID_CACHE.get(name)
 
 
 # -----------------------------------------------------------------------------
-# 取得目前班表的 _token 與已勾選狀態
+# 取得班表狀態（含所有 hidden 欄位）
+#
+# 修正：除了 _token 和已勾選的 shift_ 欄位之外，
+# 也一併抓取表單裡所有其他 hidden input（例如 _method=PUT），
+# 讓 submit 時能完整重現瀏覽器手動送出的 payload，
+# 避免 Laravel method spoofing 不符導致後台沒有真正儲存。
 # -----------------------------------------------------------------------------
-def get_shift_page_state(session: requests.Session, cleaner_id: str, month: str):
+def get_shift_page_state(
+    session: requests.Session,
+    cleaner_id: str,
+    month: str,
+) -> Tuple[str, Dict[str, str], Dict[str, str]]:
     """
-    回傳 (token, existing_shift_dict)
-    existing_shift_dict：{"2026-07-01_all": "8", "2026-07-04_2": "1400-1700", ...}
+    回傳 (token, existing_shift_dict, hidden_fields)
+
+    existing_shift_dict：{"2026-07-01_all": "8", ...}
+    hidden_fields：表單裡除了 _token 以外的所有 hidden input，
+                   例如 {"_method": "PUT"}
     """
     url = f"{memo.BASE_URL}/cleaner1/{cleaner_id}/shift"
     r = memo.session_get(session, url, params={"month": month})
     r.raise_for_status()
-
     soup = BeautifulSoup(r.text, "html.parser")
 
     token_el = soup.select_one('input[name="_token"]')
     token = token_el.get("value", "") if token_el else ""
 
-    existing = {}
+    # 抓所有 hidden input（排除 _token 本身，因為已單獨處理）
+    hidden_fields: Dict[str, str] = {}
+    for el in soup.select('input[type="hidden"]'):
+        name = el.get("name", "")
+        value = el.get("value", "")
+        if name and name != "_token":
+            hidden_fields[name] = value
+
+    # 抓已勾選的 shift_ radio
+    existing: Dict[str, str] = {}
     for el in soup.select('input[name^="shift_"][checked]'):
         name = el.get("name", "")
         value = el.get("value", "")
@@ -250,57 +208,49 @@ def get_shift_page_state(session: requests.Session, cleaner_id: str, month: str)
         if value:
             existing[key] = value
 
-    return token, existing
+    return token, existing, hidden_fields
 
 
 # -----------------------------------------------------------------------------
-# 匯入檔資料轉 payload key
+# 匯入資料轉 payload key
 # -----------------------------------------------------------------------------
 def build_new_shift_entries(rows: List[Dict], log=None):
     entries: Dict[str, str] = {}
     clear_dates = set()
-
     for row in rows:
         type_val = row["type"]
         date_val = row["date"]
-
         if type_val == CLEAR_TYPE:
             clear_dates.add(date_val)
             continue
-
         if type_val not in TYPE_MAP:
-            msg = f"⚠️ 未知類型「{type_val}」（{row.get('name', '')} {date_val}），先略過"
             if log:
-                log(msg)
+                log(f"⚠️ 未知類型「{type_val}」（{row.get('name', '')} {date_val}），略過")
             continue
-
         slot, value = TYPE_MAP[type_val]
-        key = f"{date_val}_{slot}"
-        entries[key] = value
-
+        entries[f"{date_val}_{slot}"] = value
     return entries, clear_dates
 
 
-def merge_shift_entries(existing: Dict[str, str], new_entries: Dict[str, str], clear_dates=None) -> Dict[str, str]:
-    """
-    合併規則：
-    1. 以既有勾選為底。
-    2. clear_dates 裡的日期：把該日 all/1/2/3 四個 slot 全部移除。
-    3. 再套用 new_entries：同一個 key 以新匯入的為準。
-    """
+def merge_shift_entries(
+    existing: Dict[str, str],
+    new_entries: Dict[str, str],
+    clear_dates=None,
+) -> Dict[str, str]:
     merged = dict(existing)
-
     for date_val in (clear_dates or []):
         for slot in ALL_SLOTS:
             merged.pop(f"{date_val}_{slot}", None)
-
     merged.update(new_entries)
     return merged
 
 
 # -----------------------------------------------------------------------------
 # 送出整月班表
-# 修正：加上 month 參數，POST URL 帶 ?month=YYYY-MM，與手動操作一致
+#
+# 修正：
+# 1. 加上 month 參數，POST URL 帶 ?month=YYYY-MM
+# 2. 加上 hidden_fields 參數，把 _method 等 Laravel 必要欄位一起帶進去
 # -----------------------------------------------------------------------------
 def submit_shift_payload(
     session: requests.Session,
@@ -308,14 +258,8 @@ def submit_shift_payload(
     token: str,
     merged: Dict[str, str],
     month: Optional[str] = None,
+    hidden_fields: Optional[Dict[str, str]] = None,
 ):
-    """
-    送出整月排班 payload。
-
-    month：YYYY-MM 格式，送出時會帶在 POST URL 的 query string 上，
-    與手動在後台 /cleaner1/{id}/shift?month=YYYY-MM 頁面儲存的方式一致。
-    若不傳則不帶 month 參數（舊行為，供相容）。
-    """
     url = f"{memo.BASE_URL}/cleaner1/{cleaner_id}/shift"
     params = {"month": month} if month else {}
     referer = f"{url}?month={month}" if month else url
@@ -323,37 +267,38 @@ def submit_shift_payload(
     payload = {f"shift_{k}": v for k, v in merged.items()}
     payload["_token"] = token
 
+    # 帶入 _method=PUT 等 Laravel hidden 欄位
+    if hidden_fields:
+        payload.update(hidden_fields)
+
     resp = memo.session_post(
         session,
         url,
         params=params,
         data=payload,
-        headers={
-            "Referer": referer,
-            "User-Agent": "Mozilla/5.0",
-        },
+        headers={"Referer": referer, "User-Agent": "Mozilla/5.0"},
     )
 
     try:
         resp.raise_for_status()
     except requests.HTTPError as e:
         snippet = (resp.text or "")[:500].replace("\n", " ")
-        has_token_cookie = any(
+        has_cookie = any(
             "token" in c.name.lower() or "session" in c.name.lower()
             for c in session.cookies
         )
         raise requests.HTTPError(
             f"{e}\n"
-            f"[診斷] 送出的 _token 開頭：{token[:10]}…（長度 {len(token)}）"
-            f"｜session 是否帶有 session/token 相關 cookie：{has_token_cookie}"
-            f"｜回應內容前 500 字：{snippet}"
+            f"[診斷] _token 開頭：{token[:10]}…（長度 {len(token)}）"
+            f"｜有 session cookie：{has_cookie}"
+            f"｜回應前 500 字：{snippet}"
         ) from e
 
     return resp
 
 
 # -----------------------------------------------------------------------------
-# 找「檸檬人」空檔並勾選
+# 找「檸檬人」空檔
 # -----------------------------------------------------------------------------
 LEMON_REN_PREFIX = "檸檬人"
 LEMON_REN_DEFAULT_COUNT = 10
@@ -364,26 +309,17 @@ def parse_lemon_label(text: str) -> Optional[Dict[str, str]]:
     m = re.match(r"^(?P<code>\d*)檸檬人(?P<rest>.+)$", text.strip())
     if not m:
         return None
-
     rest = m.group("rest")
     if not rest:
         return None
-
     rating = rest[-1]
     if not rating.isdigit():
         return None
-
     number_part = rest[:-1]
     if not number_part:
         return None
-
     if number_part.isdigit() or number_part in LEMON_REN_CHAR_SUFFIXES:
-        return {
-            "code": m.group("code"),
-            "name": f"檸檬人{number_part}",
-            "rating": rating,
-        }
-
+        return {"code": m.group("code"), "name": f"檸檬人{number_part}", "rating": rating}
     return None
 
 
@@ -395,36 +331,33 @@ def find_available_lemon_ren(
     log=None,
 ):
     if type_val == CLEAR_TYPE:
-        raise ValueError("「清」不是可勾選的類型，不適用於找空檔勾選")
+        raise ValueError("「清」不適用於找空檔勾選")
     if type_val not in TYPE_MAP:
-        raise ValueError(f"未知類型「{type_val}」，無法判斷對應的 slot")
+        raise ValueError(f"未知類型「{type_val}」")
 
     slot, value = TYPE_MAP[type_val]
     month = date_val[:7]
     slot_key = f"{date_val}_{slot}"
-
     checked_candidates = []
 
     for i in range(1, max_count + 1):
         lemon_name = f"{LEMON_REN_PREFIX}{i}"
-
         cleaner_id = find_cleaner_id_by_name(session, lemon_name)
         if not cleaner_id:
             if log:
                 log(f"⚠️ 找不到「{lemon_name}」的後台帳號，略過")
             continue
 
-        token, existing = get_shift_page_state(session, cleaner_id, month)
-
+        token, existing, hidden_fields = get_shift_page_state(session, cleaner_id, month)
         occupied_reason = None
 
         if slot_key in existing:
-            occupied_reason = f"{date_val} 的「{type_val}」時段本身已被勾選（{existing[slot_key]}）"
+            occupied_reason = f"{date_val} 的「{type_val}」時段已被勾選（{existing[slot_key]}）"
         else:
             conflicts = get_conflicting_slot_keys(existing, date_val, slot)
             if conflicts:
                 conflict_desc = "、".join(f"{k}={v}" for k, v in conflicts.items())
-                occupied_reason = f"{date_val} 已有跟「{type_val}」互斥的勾選（{conflict_desc}），不能再勾"
+                occupied_reason = f"{date_val} 已有互斥勾選（{conflict_desc}）"
 
         if occupied_reason:
             if log:
@@ -437,7 +370,7 @@ def find_available_lemon_ren(
             continue
 
         if log:
-            log(f"✅ 找到空檔：{lemon_name}（id={cleaner_id}），{date_val} 的「{type_val}」目前是空的且無衝突")
+            log(f"✅ 找到空檔：{lemon_name}（id={cleaner_id}），{date_val} 的「{type_val}」目前是空的")
 
         return {
             "found": True,
@@ -448,21 +381,17 @@ def find_available_lemon_ren(
             "value": value,
             "token": token,
             "existing": existing,
+            "hidden_fields": hidden_fields,
             "checked_candidates": checked_candidates,
         }
 
     if log:
-        log(f"❌ 檸檬人1~{max_count} 在 {date_val}「{type_val}」這個時段全部被佔用或找不到帳號")
+        log(f"❌ 檸檬人1~{max_count} 在 {date_val}「{type_val}」全部被佔用或找不到帳號")
 
     return {
-        "found": False,
-        "name": None,
-        "cleaner_id": None,
-        "month": month,
-        "slot_key": slot_key,
-        "value": value,
-        "token": None,
-        "existing": {},
+        "found": False, "name": None, "cleaner_id": None,
+        "month": month, "slot_key": slot_key, "value": value,
+        "token": None, "existing": {}, "hidden_fields": {},
         "checked_candidates": checked_candidates,
     }
 
@@ -476,18 +405,17 @@ def confirm_lemon_ren_assignment(session: requests.Session, candidate: Dict, log
     slot_key = candidate["slot_key"]
     value = candidate["value"]
 
-    token, existing = get_shift_page_state(session, cleaner_id, month)
+    token, existing, hidden_fields = get_shift_page_state(session, cleaner_id, month)
 
     if slot_key in existing:
         raise RuntimeError(
-            f"「{candidate['name']}」的 {slot_key} 在送出前已經被勾選為 {existing[slot_key]}，"
-            f"可能被別人搶先一步，請重新查詢空檔"
+            f"「{candidate['name']}」的 {slot_key} 在送出前已被勾選為 {existing[slot_key]}，"
+            f"可能被別人搶先，請重新查詢"
         )
 
     merged = dict(existing)
     merged[slot_key] = value
-
-    submit_shift_payload(session, cleaner_id, token, merged, month=month)
+    submit_shift_payload(session, cleaner_id, token, merged, month=month, hidden_fields=hidden_fields)
 
     if log:
         log(f"✅ 已將「{candidate['name']}」於 {slot_key} 勾選為 {value} 並儲存")
@@ -501,16 +429,14 @@ def check_merged_conflicts(merged: Dict[str, str]) -> List[str]:
     for key, value in merged.items():
         date_val, slot = key.rsplit("_", 1)
         by_date.setdefault(date_val, {})[slot] = value
-
     for date_val, slots in by_date.items():
-        for slot, value in slots.items():
+        for slot in slots:
             for conflicting_slot in CONFLICT_MAP.get(slot, set()):
                 if conflicting_slot in slots:
                     pair = tuple(sorted([slot, conflicting_slot]))
                     msg = f"⚠️ {date_val} 同時勾選了 {pair[0]}={slots[pair[0]]} 跟 {pair[1]}={slots[pair[1]]}，請確認"
                     if msg not in warnings:
                         warnings.append(msg)
-
     return warnings
 
 
@@ -523,17 +449,12 @@ LEMON_REN_NAME_PATTERN = re.compile(r"^檸檬人")
 def process_import_file(rows: List[Dict], dry_run: bool = True, ui_logger=None, session=None) -> Dict:
     log = make_logger(ui_logger)
     result = {
-        "processed_people": 0,
-        "processed_months": 0,
-        "saved": 0,
-        "skipped": [],
-        "errors": [],
-        "dry_run_payloads": [],
+        "processed_people": 0, "processed_months": 0, "saved": 0,
+        "skipped": [], "errors": [], "dry_run_payloads": [],
     }
 
     lemon_rows = [r for r in rows if LEMON_REN_NAME_PATTERN.match(r.get("name", ""))]
     rows = [r for r in rows if not LEMON_REN_NAME_PATTERN.match(r.get("name", ""))]
-
     if lemon_rows:
         log(f"⏭ 已略過 {len(lemon_rows)} 筆檸檬人資料（請改用「檸檬人空檔勾選」功能處理）")
 
@@ -543,7 +464,6 @@ def process_import_file(rows: List[Dict], dry_run: bool = True, ui_logger=None, 
 
     for name, months in grouped.items():
         log(f"\n===== 處理專員：{name} =====")
-
         cleaner_id = find_cleaner_id_by_name(session, name)
         if not cleaner_id:
             msg = f"❌ 找不到專員「{name}」的後台 ID，略過"
@@ -556,14 +476,11 @@ def process_import_file(rows: List[Dict], dry_run: bool = True, ui_logger=None, 
 
         for month, month_rows in months.items():
             log(f"[{name}] 月份 {month}，共 {len(month_rows)} 筆匯入資料")
-
             try:
-                token, existing = get_shift_page_state(session, cleaner_id, month)
+                token, existing, hidden_fields = get_shift_page_state(session, cleaner_id, month)
                 new_entries, clear_dates = build_new_shift_entries(month_rows, log=log)
-
                 mentioned_dates = clear_dates | {k.rsplit("_", 1)[0] for k in new_entries}
                 merged = merge_shift_entries(existing, new_entries, mentioned_dates)
-
                 result["processed_months"] += 1
 
                 if clear_dates:
@@ -573,7 +490,7 @@ def process_import_file(rows: List[Dict], dry_run: bool = True, ui_logger=None, 
                     log(f"[{name} {month}] DRY RUN，合併後共 {len(merged)} 筆，不會送出")
                     result["dry_run_payloads"].append((name, month, merged))
                 else:
-                    submit_shift_payload(session, cleaner_id, token, merged, month=month)
+                    submit_shift_payload(session, cleaner_id, token, merged, month=month, hidden_fields=hidden_fields)
                     log(f"✅ [{name} {month}] 已儲存，共 {len(merged)} 筆")
                     result["saved"] += 1
 
@@ -586,7 +503,7 @@ def process_import_file(rows: List[Dict], dry_run: bool = True, ui_logger=None, 
 
 
 # =============================================================================
-# 清空排班：功能1 —— 清空某人（含檸檬人）一段期間的排班
+# 清空排班
 # =============================================================================
 def date_range(date_start: str, date_end: str) -> List[str]:
     d1 = date.fromisoformat(date_start)
@@ -608,20 +525,17 @@ def clear_person_shift_dates(
     ui_logger=None,
 ) -> Dict:
     """
-    清空指定人員（含檸檬人）在 dates_to_clear 這些日期的整天排班，並送出儲存。
+    清空指定人員在 dates_to_clear 這些日期的整天排班並儲存。
 
     修正：
-    - 確認當月「真的有勾選要清」才送出，無勾選時直接略過，不送出空 payload。
-    - submit_shift_payload 帶入 month 參數，POST URL 帶 ?month=YYYY-MM。
+    - 確認當月有勾選才送出（無勾選直接略過）
+    - submit 帶入 month 和 hidden_fields（含 _method=PUT）
     """
     log = make_logger(ui_logger)
     result = {
-        "name": name,
-        "cleaner_id": None,
-        "cleared_dates": [],
-        "cleared_slot_count": 0,
-        "untouched_dates": [],
-        "errors": [],
+        "name": name, "cleaner_id": None,
+        "cleared_dates": [], "cleared_slot_count": 0,
+        "untouched_dates": [], "errors": [],
     }
 
     cleaner_id = find_cleaner_id_by_name(session, name)
@@ -639,11 +553,11 @@ def clear_person_shift_dates(
 
     for month, dates in by_month.items():
         try:
-            token, existing = get_shift_page_state(session, cleaner_id, month)
+            token, existing, hidden_fields = get_shift_page_state(session, cleaner_id, month)
 
+            # 先計算這個月起迄範圍內有哪些日期真的有勾選
             removed_keys = []
             month_cleared_dates = []
-
             for d in dates:
                 day_had_entry = False
                 for slot in ALL_SLOTS:
@@ -657,14 +571,17 @@ def clear_person_shift_dates(
                 else:
                     result["untouched_dates"].append(d)
 
-            # 修正：只有當月真的有勾選要清時才送出，避免送出空 payload
+            # 確認有勾選才送出，無勾選直接略過
             if not month_cleared_dates:
                 log(f"ℹ️ [{name} {month}] 查詢範圍內這個月沒有任何已勾選的排班，略過")
                 continue
 
             merged = merge_shift_entries(existing, {}, clear_dates=dates)
-            # 修正：帶入 month 參數，POST URL = /cleaner1/{id}/shift?month=YYYY-MM
-            submit_shift_payload(session, cleaner_id, token, merged, month=month)
+            submit_shift_payload(
+                session, cleaner_id, token, merged,
+                month=month,
+                hidden_fields=hidden_fields,
+            )
 
             result["cleared_slot_count"] += len(removed_keys)
             log(
@@ -687,13 +604,12 @@ def clear_person_shift_range(
     date_end: str,
     ui_logger=None,
 ) -> Dict:
-    """功能1 的對外入口：清空某人（含檸檬人）date_start ~ date_end 這段期間的排班。"""
     dates = date_range(date_start, date_end)
     return clear_person_shift_dates(session, name, dates, ui_logger=ui_logger)
 
 
 # =============================================================================
-# 清空排班：功能2 —— 從清潔班表「未配班」清單，反查並清除檸檬人佔用的時段
+# 從未配班清單清除檸檬人
 # =============================================================================
 def _parse_schedule_query_date(html: str, fallback: str) -> str:
     soup = BeautifulSoup(html, "html.parser")
@@ -708,14 +624,12 @@ def _row_label_to_date(label: str, query_date: str) -> Optional[str]:
     if not m:
         return None
     month, day = m.group(1), m.group(2)
-
     q = date.fromisoformat(query_date)
     year = q.year
     if q.month == 12 and int(month) == 1:
         year += 1
     elif q.month == 1 and int(month) == 12:
         year -= 1
-
     return f"{year}-{month}-{day}"
 
 
@@ -723,16 +637,13 @@ def parse_unassigned_lemon_entries(html: str, query_date: str) -> List[Dict]:
     soup = BeautifulSoup(html, "html.parser")
     seen = set()
     results = []
-
     for tr in soup.select("table tr"):
         tds = tr.find_all("td", recursive=False)
         if not tds:
             continue
-        first_text = tds[0].get_text(strip=True)
-        date_val = _row_label_to_date(first_text, query_date)
+        date_val = _row_label_to_date(tds[0].get_text(strip=True), query_date)
         if not date_val:
             continue
-
         for p in tr.select('p[style*="616161"]'):
             for span in p.find_all("span", recursive=True):
                 if span.find_parent("a"):
@@ -746,12 +657,7 @@ def parse_unassigned_lemon_entries(html: str, query_date: str) -> List[Dict]:
                 if dedup_key in seen:
                     continue
                 seen.add(dedup_key)
-                results.append({
-                    "date": date_val,
-                    "name": lemon_name,
-                    "raw": text,
-                })
-
+                results.append({"date": date_val, "name": lemon_name, "raw": text})
     return results
 
 
@@ -764,14 +670,11 @@ def find_unassigned_lemon_bookings(
     url = f"{memo.BASE_URL}/schedule"
     r = memo.session_get(session, url, params={"date": query_date})
     r.raise_for_status()
-
     actual_query_date = _parse_schedule_query_date(r.text, query_date)
     entries = parse_unassigned_lemon_entries(r.text, actual_query_date)
-
     log(f"在 {query_date} 所在那週的清潔班表裡，找到 {len(entries)} 筆未配班清單中的檸檬人佔用紀錄")
     for e in entries:
         log(f"  - {e['date']}　{e['name']}（原始文字：{e['raw']}）")
-
     return entries
 
 
@@ -780,9 +683,7 @@ def clear_unassigned_lemon_bookings(
     entries: List[Dict],
     ui_logger=None,
 ) -> List[Dict]:
-    """拿 find_unassigned_lemon_bookings() 的結果，依檸檬人分組，清空並儲存。"""
     log = make_logger(ui_logger)
-
     by_name: Dict[str, List[str]] = {}
     for e in entries:
         by_name.setdefault(e["name"], []).append(e["date"])
@@ -792,5 +693,4 @@ def clear_unassigned_lemon_bookings(
         log(f"\n===== 清空檸檬人：{name}（{sorted(set(dates))}）=====")
         res = clear_person_shift_dates(session, name, sorted(set(dates)), ui_logger=ui_logger)
         results.append(res)
-
     return results
