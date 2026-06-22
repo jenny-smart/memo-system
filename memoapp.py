@@ -1572,12 +1572,12 @@ def render_assessment_section():
     if st.session_state.get("assess_v1"):
         st.markdown("---")
         step("4", "版本一 — 含時數（至加總）")
-        st.code(st.session_state["assess_v1"], language=None)
+        st.text_area("版本一", value=st.session_state["assess_v1"], height=280, key="assess_v1_edit")
 
         step("5", "版本二 — 移除時數（含注意事項）")
-        st.code(st.session_state["assess_v2"], language=None)
+        st.text_area("版本二", value=st.session_state["assess_v2"], height=420, key="assess_v2_edit")
 
-        st.caption("點擊右上角複製圖示即可複製。")
+        st.caption("內容可直接在上方編輯，再全選複製使用。")
 
 # ============================================================
 # 路由
