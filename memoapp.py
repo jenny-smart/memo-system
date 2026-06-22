@@ -1576,7 +1576,7 @@ def render_assessment_section():
         def _copyable_editor(label, content, key_suffix, height):
             safe = _html.escape(content)
             lines = content.count("\n") + 1
-            ta_height = max(height, lines * 22 + 20)
+            ta_height = max(height, lines * 26 + 60)
             _components.html(f"""
 <html><body style="margin:0;padding:0;background:transparent;">
 <p style="margin:0 0 4px 0;font-size:14px;font-weight:700;
@@ -1600,7 +1600,7 @@ def render_assessment_section():
   複製
 </button>
 </body></html>
-""", height=ta_height + 60)
+""", height=ta_height + 80)
 
         st.markdown("---")
         step("4", "版本一 — 含時數（至加總）")
@@ -1608,7 +1608,7 @@ def render_assessment_section():
 
         st.markdown("<div style='margin-top:1.2rem'></div>", unsafe_allow_html=True)
         step("5", "版本二 — 移除時數（含注意事項）")
-        _copyable_editor("版本二", st.session_state["assess_v2"], "v2", 380)
+        _copyable_editor("版本二", st.session_state["assess_v2"], "v2", 600)
 
 # ============================================================
 # 路由
