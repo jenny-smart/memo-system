@@ -1570,38 +1570,45 @@ def render_assessment_section():
         st.session_state["assess_v2"] = "\n".join(v2_lines)
 
     if st.session_state.get("assess_v1"):
-        import json
-        import streamlit.components.v1 as components
+        import html as _html
+        import streamlit.components.v1 as _components
+
+        def _copyable_editor(label, content, key_suffix, height):
+            safe = _html.escape(content)
+            lines = content.count("\n") + 1
+            ta_height = max(height, lines * 22 + 20)
+            _components.html(f"""
+<html><body style="margin:0;padding:0;background:transparent;">
+<p style="margin:0 0 4px 0;font-size:14px;font-weight:700;
+   font-family:'Noto Sans TC',sans-serif;color:#1C1C1E;">{_html.escape(label)}</p>
+<textarea id="ta_{key_suffix}"
+  style="width:100%;height:{ta_height}px;box-sizing:border-box;
+         border-radius:12px;border:1.5px solid #E8E8EC;
+         font-size:14px;line-height:1.6;padding:10px;
+         font-family:'Noto Sans TC',sans-serif;resize:vertical;">{safe}</textarea>
+<button id="btn_{key_suffix}"
+  onclick="navigator.clipboard.writeText(document.getElementById('ta_{key_suffix}').value)
+           .then(function(){{
+               document.getElementById('btn_{key_suffix}').textContent='✅ 已複製！';
+               setTimeout(function(){{
+                   document.getElementById('btn_{key_suffix}').textContent='複製';
+               }}, 1500);
+           }});"
+  style="background:#F5C518;border:none;border-radius:12px;padding:9px 16px;
+         font-weight:700;cursor:pointer;width:100%;margin-top:8px;font-size:15px;
+         font-family:'Noto Sans TC',sans-serif;">
+  複製
+</button>
+</body></html>
+""", height=ta_height + 60)
 
         st.markdown("---")
         step("4", "版本一 — 含時數（至加總）")
-        v1_edited = st.text_area("版本一", value=st.session_state["assess_v1"], height=280, key="assess_v1_edit")
-        components.html(f"""
-        <button onclick="navigator.clipboard.writeText({json.dumps(v1_edited)}).then(()=>{{
-            this.textContent='✅ 已複製！';
-            setTimeout(()=>this.textContent='複製版本一',1500);
-        }})"
-        style="background:#F5C518;border:none;border-radius:12px;padding:10px 20px;
-               font-weight:700;cursor:pointer;width:100%;font-size:15px;
-               font-family:'Noto Sans TC',sans-serif;">
-        複製版本一
-        </button>
-        """, height=48)
+        _copyable_editor("版本一", st.session_state["assess_v1"], "v1", 260)
 
-        st.markdown("<div style='margin-top:1rem'></div>", unsafe_allow_html=True)
+        st.markdown("<div style='margin-top:1.2rem'></div>", unsafe_allow_html=True)
         step("5", "版本二 — 移除時數（含注意事項）")
-        v2_edited = st.text_area("版本二", value=st.session_state["assess_v2"], height=420, key="assess_v2_edit")
-        components.html(f"""
-        <button onclick="navigator.clipboard.writeText({json.dumps(v2_edited)}).then(()=>{{
-            this.textContent='✅ 已複製！';
-            setTimeout(()=>this.textContent='複製版本二',1500);
-        }})"
-        style="background:#F5C518;border:none;border-radius:12px;padding:10px 20px;
-               font-weight:700;cursor:pointer;width:100%;font-size:15px;
-               font-family:'Noto Sans TC',sans-serif;">
-        複製版本二
-        </button>
-        """, height=48)
+        _copyable_editor("版本二", st.session_state["assess_v2"], "v2", 380)
 
 # ============================================================
 # 路由
