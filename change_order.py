@@ -1,11 +1,16 @@
 # ============================================================
 # 檔名：change_order.py
-# 版本：v1.4
+# 版本：v1.5
 # 模組：清潔異動模組：車馬費 / 異動服務收款 / 異動服務退款
 # 建立日期：2026-06-22
 # 最後更新：2026-06-24
 #
 # Change Log
+# v1.4
+# v1.5
+# - 修正 get_pending_rows(row_spec=...) 相容 memoapp.py 指定列號掃描，避免 unexpected keyword argument row_spec。
+# - 指定列號支援單列、多列與區間，例如 19、19,21、19-22。
+#
 # v1.4
 # - 修正階段 B 回填後台：isCharge / isRefund 依後台 radio value 寫入。
 # - 待加收 / 已加收時，M 欄寫入加收日期。
@@ -847,6 +852,8 @@ def append_rows_to_sheet(region: str, rows: list, ui_logger=None):
         if ui_logger:
             ui_logger(msg)
 
+    wanted_rows = _parse_sheet_row_spec(row_spec) if row_spec else set()
+
     ws = get_worksheet(region)
 
     # 不能用 get_all_values() 的列數判斷起始列：
@@ -1164,7 +1171,32 @@ def _row_amount(row: list, status: str) -> str:
     return ""
 
 
-def get_pending_rows(region: str, ui_logger=None):
+
+def _parse_sheet_row_spec(row_spec: str) -> set[int]:
+    """解析 Sheet 列號字串，支援：19、19,21、19-22、19，21。"""
+    text = str(row_spec or "").strip()
+    if not text:
+        return set()
+
+    rows = set()
+    for part in re.split(r"[,，\s]+", text):
+        part = part.strip()
+        if not part:
+            continue
+        m = re.fullmatch(r"(\d+)\s*-\s*(\d+)", part)
+        if m:
+            start, end = int(m.group(1)), int(m.group(2))
+            if start > end:
+                start, end = end, start
+            rows.update(range(start, end + 1))
+            continue
+        if re.fullmatch(r"\d+", part):
+            rows.add(int(part))
+            continue
+        raise ValueError(f"列號格式錯誤：{part}（支援：19、19,21、19-22）")
+    return rows
+
+def get_pending_rows(region: str, row_spec: str = None, ui_logger=None):
     """
     讀取清潔異動工作表，篩出需要回填後台的列。
     支援 B 欄狀態：待收款、待退款、已收款、已退款；且對應金額欄需有值。
@@ -1174,11 +1206,15 @@ def get_pending_rows(region: str, ui_logger=None):
         if ui_logger:
             ui_logger(msg)
 
+    wanted_rows = _parse_sheet_row_spec(row_spec) if row_spec else set()
+
     ws = get_worksheet(region)
     all_values = ws.get_all_values()
 
     pending = []
     for row_no, row in enumerate(all_values[1:], start=2):
+        if wanted_rows and row_no not in wanted_rows:
+            continue
         if len(row) < 2:
             continue
         status = _sheet_cell(row, "B").strip()
@@ -1206,7 +1242,7 @@ def get_pending_rows(region: str, ui_logger=None):
             "raw": row,
         })
 
-    log(f"掃描到 {len(pending)} 筆待回填資料")
+    log(f"掃描到 {len(pending)} 筆待回填資料" + (f"（指定列號：{row_spec}）" if row_spec else ""))
     return pending
 
 
@@ -1343,6 +1379,8 @@ def mark_sheet_row_done(region: str, sheet_row: int, kind: str, ui_logger=None):
     def log(msg):
         if ui_logger:
             ui_logger(msg)
+
+    wanted_rows = _parse_sheet_row_spec(row_spec) if row_spec else set()
 
     ws = get_worksheet(region)
     ws.update_acell(f"AD{sheet_row}", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
