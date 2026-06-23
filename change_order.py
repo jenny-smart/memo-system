@@ -28,7 +28,28 @@ try:
 except Exception:
     st = None
 
-BASE_URL = "https://backend.lemonclean.com.tw"
+BASE_URLS = {
+    "prod": "https://backend.lemonclean.com.tw",
+    "dev": "https://backend-dev.lemonclean.com.tw",
+}
+CURRENT_ENV = "prod"
+BASE_URL = BASE_URLS[CURRENT_ENV]
+
+
+def set_env(env: str = "prod"):
+    """切換後台環境，讓服務異動查詢與回填跟登入區選擇的 prod/dev 一致。"""
+    global CURRENT_ENV, BASE_URL
+    env = (env or "prod").strip().lower()
+    if env not in BASE_URLS:
+        raise ValueError(f"不支援的環境：{env}（目前支援：{list(BASE_URLS.keys())}）")
+    CURRENT_ENV = env
+    BASE_URL = BASE_URLS[env]
+    return BASE_URL
+
+
+def get_base_url() -> str:
+    """回傳目前服務異動模組使用的後台網址。"""
+    return BASE_URL
 
 # 週六日與台灣國定假日不算工作日。此表先放 2026 年常用放假日；
 # 後續若跨年使用，只要補同格式日期即可。
