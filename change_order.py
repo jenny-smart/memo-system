@@ -1,5 +1,19 @@
-# change_order.py
 # -*- coding: utf-8 -*-
+# ============================================================
+# 檔名：change_order.py
+# 版本：v1.2
+# 模組：清潔異動後端模組
+# 建立日期：2026-06-22
+# 最後更新：2026-06-24
+#
+# Change Log
+# v1.2
+# - 新增 prod/dev 環境切換，服務異動查詢與回填會跟隨登入區環境。
+# - 更新台中清潔異動工作表 gid=759897417。
+# - 台北、台中清潔異動工作表 K 欄統一寫入公式：
+#   =TEXT(E列,"YYYY/MM/DD")&" "&G列&" "&C列&"--"&J列
+# - 移除各情境列資料中的 K 欄文字值，避免覆蓋 K 欄公式邏輯。
+# ============================================================
 """
 清潔異動模組：車馬費 / 異動服務收款 / 異動服務退款
 
@@ -625,7 +639,6 @@ def build_charge_row(order: dict, change_fee_info: dict, service_note: str,
         "E": _today_taipei_str(today),
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value, "J": j_value,
-        "K": service_note or "",
         "M": "", "N": change_fee_info["change_fee"], "O": "",
         "_calc_amount": change_fee_info["change_fee"],
         "_calc_note": change_fee_info["calc_note"],
@@ -645,7 +658,6 @@ def build_refund_row(order: dict, change_fee_info: dict, service_note: str,
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value,
         "J": j_value,
-        "K": service_note or "",
         "R": "信用卡" if order.get("payway") != "儲值金" else "儲值金",
         "S": refund_amount,
         "X": order.get("invoice_no", ""),
@@ -720,7 +732,6 @@ def build_addtime_row(order: dict, time_fee_info: dict, service_note: str,
         "E": _today_taipei_str(today),
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value, "J": j_value,
-        "K": service_note or "",
         "M": "", "N": time_fee_info["amount"], "O": "",
         "_calc_amount": time_fee_info["amount"],
         "_calc_note": time_fee_info["calc_note"],
@@ -740,7 +751,6 @@ def build_reducetime_row(order: dict, time_fee_info: dict, service_note: str,
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value,
         "J": j_value,
-        "K": service_note or "",
         "R": "信用卡" if order.get("payway") != "儲值金" else "儲值金",
         "S": time_fee_info["amount"],
         "X": order.get("invoice_no", ""),
@@ -761,7 +771,6 @@ def build_weekday_to_weekend_row(order: dict, time_fee_info: dict, service_note:
         "E": _today_taipei_str(today),
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value, "J": j_value,
-        "K": service_note or "",
         "M": "", "N": time_fee_info["amount"], "O": "",
         "_calc_amount": time_fee_info["amount"],
         "_calc_note": time_fee_info["calc_note"],
@@ -779,7 +788,6 @@ def build_weekend_to_weekday_row(order: dict, time_fee_info: dict, service_note:
         "E": _today_taipei_str(today),
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value, "J": j_value,
-        "K": service_note or "",
         "R": "信用卡" if order.get("payway") != "儲值金" else "儲值金",
         "S": time_fee_info["amount"],
         "X": order.get("invoice_no", ""),
@@ -814,7 +822,6 @@ def build_manual_refund_row(order: dict, amount, refund_type_label: str, service
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value,
         "J": j_value,
-        "K": service_note or "",
         "R": "信用卡" if order.get("payway") != "儲值金" else "儲值金",
         "S": amount,
         "X": order.get("invoice_no", ""),
@@ -822,6 +829,13 @@ def build_manual_refund_row(order: dict, amount, refund_type_label: str, service
         "_calc_amount": amount,
         "_calc_note": f"{refund_type_label}（人工輸入金額）= ${amount}",
     }
+
+
+
+def _clean_change_k_formula(row_number: int) -> str:
+    """K 欄公式：日期 + 客戶姓名 + 訂單編號 + 異動說明。"""
+    return f'=TEXT(E{row_number},"YYYY/MM/DD")&" "&G{row_number}&" "&C{row_number}&"--"&J{row_number}'
+
 
 def append_rows_to_sheet(region: str, rows: list, ui_logger=None):
     """
@@ -845,7 +859,8 @@ def append_rows_to_sheet(region: str, rows: list, ui_logger=None):
     start_row = last_data_row + 1
 
     col_letters = sorted(set(
-        k for row in rows for k in row.keys() if not k.startswith("_")
+        k for row in rows for k in row.keys()
+        if not k.startswith("_") and k != "K"
     ))
 
     needed_rows = start_row + len(rows) - 1
@@ -860,8 +875,9 @@ def append_rows_to_sheet(region: str, rows: list, ui_logger=None):
             for col in col_letters:
                 if col in row and row[col] != "":
                     ws.update_acell(f"{col}{target_row}", row[col])
+            ws.update_acell(f"K{target_row}", _clean_change_k_formula(target_row))
             written += 1
-            log(f"✅ 已寫入第 {target_row} 列：{row.get('G', '')}")
+            log(f"✅ 已寫入第 {target_row} 列：{row.get('G', '')}（K欄公式已更新）")
         except Exception as e:
             errors.append(f"第 {target_row} 列（{row.get('G','')}）寫入失敗：{e}")
 
