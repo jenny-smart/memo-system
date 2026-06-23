@@ -1,12 +1,17 @@
 # -*- coding: utf-8 -*-
 # ============================================================
 # 檔名：change_order.py
-# 版本：v1.2
+# 版本：v1.3
 # 模組：清潔異動後端模組
 # 建立日期：2026-06-22
 # 最後更新：2026-06-24
 #
 # Change Log
+# v1.3
+# - 修正回填系統 radio 欄位值：isCharge/isRefund 依後台實際值寫入 0/1/2/3，避免畫面顯示成功但後台仍為「無」。
+# - 階段 B 支援指定 Sheet 列號回填，可輸入 19、19,21 或 19-22。
+# - 保留 v1.2 的 prod/dev 環境切換、台中 gid 與 K 欄公式邏輯。
+#
 # v1.2
 # - 新增 prod/dev 環境切換，服務異動查詢與回填會跟隨登入區環境。
 # - 更新台中清潔異動工作表 gid=759897417。
@@ -1054,6 +1059,44 @@ def _unchecked_value(controls: dict, name: str) -> Optional[str]:
     return None
 
 
+def _set_radio_value(form_data: dict, controls: dict, name: str, value, ui_logger=None):
+    """
+    後台加收/退款狀態是 radio：
+      isCharge: 0=無, 1=待加收, 2=已加收
+      isRefund: 0=無, 1=待退款, 2=已部分退款, 3=已全額退款
+    不能沿用 _set_checkbox，否則會抓到第一個 radio value=0，造成 POST 後仍顯示「無」。
+    """
+    value = str(value)
+    if name in controls:
+        radio_values = [str(c.get("value", "")) for c in controls.get(name, []) if c.get("type") == "radio"]
+        if radio_values and value not in radio_values and ui_logger:
+            ui_logger(f"⚠️ radio 欄位 {name} 沒有選項值 {value}，現有值：{radio_values}")
+    form_data[name] = value
+    return name
+
+
+def _parse_sheet_row_spec(row_spec: str) -> set[int]:
+    """解析 Sheet 列號：19、19,21、19-22。空字串代表不限制。"""
+    text = str(row_spec or "").strip()
+    if not text:
+        return set()
+    rows = set()
+    for part in re.split(r"[,，\s]+", text):
+        part = part.strip()
+        if not part:
+            continue
+        if re.fullmatch(r"\d+[-~～]\d+", part):
+            a, b = map(int, re.split(r"[-~～]", part, maxsplit=1))
+            if a > b:
+                a, b = b, a
+            rows.update(range(a, b + 1))
+        elif part.isdigit():
+            rows.add(int(part))
+        else:
+            raise ValueError(f"列號格式錯誤：{part}（支援 19、19,21、19-22）")
+    return {r for r in rows if r >= 2}
+
+
 def _set_checkbox(form_data: dict, controls: dict, names: list, checked: bool,
                   keywords: list = None, fallback_name: str = None,
                   ui_logger=None):
@@ -1138,7 +1181,7 @@ def _row_amount(row: list, status: str) -> str:
     return ""
 
 
-def get_pending_rows(region: str, ui_logger=None):
+def get_pending_rows(region: str, row_spec: str = "", ui_logger=None):
     """
     讀取清潔異動工作表，篩出需要回填後台的列。
     支援 B 欄狀態：待收款、待退款、已收款、已退款；且對應金額欄需有值。
@@ -1150,9 +1193,14 @@ def get_pending_rows(region: str, ui_logger=None):
 
     ws = get_worksheet(region)
     all_values = ws.get_all_values()
+    target_rows = _parse_sheet_row_spec(row_spec)
+    if target_rows:
+        log(f"僅掃描指定 Sheet 列號：{', '.join(str(r) for r in sorted(target_rows))}")
 
     pending = []
     for row_no, row in enumerate(all_values[1:], start=2):
+        if target_rows and row_no not in target_rows:
+            continue
         if len(row) < 2:
             continue
         status = _sheet_cell(row, "B").strip()
@@ -1180,6 +1228,10 @@ def get_pending_rows(region: str, ui_logger=None):
             "raw": row,
         })
 
+    if target_rows:
+        missing_rows = sorted(target_rows - {p["sheet_row"] for p in pending})
+        if missing_rows:
+            log(f"⚠️ 指定列號未納入回填（可能 B 欄狀態/訂單編號/金額不符合）：{', '.join(map(str, missing_rows))}")
     log(f"掃描到 {len(pending)} 筆待回填資料")
     return pending
 
@@ -1192,10 +1244,8 @@ def apply_sheet_row_to_form(form_data: dict, controls: dict, item: dict,
     backend_note = _sheet_cell(raw, "K").strip()
 
     if status == STATUS_PENDING_CHARGE:
-        _set_checkbox(form_data, controls, CHECK_PENDING_CHARGE, True,
-                      keywords=["待加收", "待收款"], fallback_name="isCharge", ui_logger=ui_logger)
-        _set_checkbox(form_data, controls, CHECK_PENDING_REFUND, False,
-                      keywords=["待退款"], fallback_name="isRefund", ui_logger=ui_logger)
+        _set_radio_value(form_data, controls, "isCharge", 1, ui_logger=ui_logger)
+        _set_radio_value(form_data, controls, "isRefund", 0, ui_logger=ui_logger)
         _set_field(form_data, controls, FIELD_CHARGE_AMOUNT, _sheet_cell(raw, "N"),
                    keywords=["加收金額", "收款金額"], fallback_name="chargeAmount", ui_logger=ui_logger)
         _set_field(form_data, controls, FIELD_CHARGE_INVOICE, _sheet_cell(raw, "O"),
@@ -1205,10 +1255,8 @@ def apply_sheet_row_to_form(form_data: dict, controls: dict, item: dict,
         return
 
     if status == STATUS_PENDING_REFUND:
-        _set_checkbox(form_data, controls, CHECK_PENDING_CHARGE, False,
-                      keywords=["待加收", "待收款"], fallback_name="isCharge", ui_logger=ui_logger)
-        _set_checkbox(form_data, controls, CHECK_PENDING_REFUND, True,
-                      keywords=["待退款"], fallback_name="isRefund", ui_logger=ui_logger)
+        _set_radio_value(form_data, controls, "isCharge", 0, ui_logger=ui_logger)
+        _set_radio_value(form_data, controls, "isRefund", 1, ui_logger=ui_logger)
         _set_field(form_data, controls, FIELD_REFUND_AMOUNT, _sheet_cell(raw, "S"),
                    keywords=["退款金額"], fallback_name="refundAmount", ui_logger=ui_logger)
         _set_field(form_data, controls, FIELD_REFUND_FLOW, _sheet_cell(raw, "R"),
@@ -1218,12 +1266,8 @@ def apply_sheet_row_to_form(form_data: dict, controls: dict, item: dict,
         return
 
     if status == STATUS_DONE_CHARGE:
-        _set_checkbox(form_data, controls, CHECK_PENDING_CHARGE, False,
-                      keywords=["待加收", "待收款"], fallback_name="isCharge", ui_logger=ui_logger)
-        _set_checkbox(form_data, controls, CHECK_PENDING_REFUND, False,
-                      keywords=["待退款"], fallback_name="isRefund", ui_logger=ui_logger)
-        _set_checkbox(form_data, controls, CHECK_DONE_CHARGE, True,
-                      keywords=["已收款", "已加收"], ui_logger=ui_logger)
+        _set_radio_value(form_data, controls, "isCharge", 2, ui_logger=ui_logger)
+        _set_radio_value(form_data, controls, "isRefund", 0, ui_logger=ui_logger)
         _set_field(form_data, controls, FIELD_CHARGE_DATE, _normalize_date_value(_sheet_cell(raw, "M")),
                    keywords=["收款日期", "收款時間"], fallback_name="chargeDate", ui_logger=ui_logger)
         _set_field(form_data, controls, FIELD_CHARGE_AMOUNT, _sheet_cell(raw, "N"),
@@ -1237,24 +1281,12 @@ def apply_sheet_row_to_form(form_data: dict, controls: dict, item: dict,
         return
 
     if status == STATUS_DONE_REFUND:
-        _set_checkbox(form_data, controls, CHECK_PENDING_CHARGE, False,
-                      keywords=["待加收", "待收款"], fallback_name="isCharge", ui_logger=ui_logger)
-        _set_checkbox(form_data, controls, CHECK_PENDING_REFUND, False,
-                      keywords=["待退款"], fallback_name="isRefund", ui_logger=ui_logger)
+        _set_radio_value(form_data, controls, "isCharge", 0, ui_logger=ui_logger)
 
         refund_amount = _parse_money_value(_sheet_cell(raw, "S"))
         order_total = _parse_money_value((order or {}).get("total"))
         is_full_refund = bool(order_total and refund_amount == order_total)
-        if is_full_refund:
-            _set_checkbox(form_data, controls, CHECK_REFUND_FULL, True,
-                          keywords=["已全部退款", "全部退款", "全額退款"], ui_logger=ui_logger)
-            _set_checkbox(form_data, controls, CHECK_REFUND_PARTIAL, False,
-                          keywords=["已部份退款", "已部分退款", "部份退款", "部分退款"], ui_logger=ui_logger)
-        else:
-            _set_checkbox(form_data, controls, CHECK_REFUND_FULL, False,
-                          keywords=["已全部退款", "全部退款", "全額退款"], ui_logger=ui_logger)
-            _set_checkbox(form_data, controls, CHECK_REFUND_PARTIAL, True,
-                          keywords=["已部份退款", "已部分退款", "部份退款", "部分退款"], ui_logger=ui_logger)
+        _set_radio_value(form_data, controls, "isRefund", 3 if is_full_refund else 2, ui_logger=ui_logger)
 
         _set_field(form_data, controls, FIELD_REFUND_DATE, _normalize_date_value(_sheet_cell(raw, "AC")),
                    keywords=["退款日期", "退款時間"], fallback_name="refundDate", ui_logger=ui_logger)
@@ -1302,7 +1334,7 @@ def sync_one_to_purchase_edit(item: dict, session: requests.Session, ui_logger=N
     apply_sheet_row_to_form(form_data, controls, item, order=order, ui_logger=ui_logger)
     form_data["_token"] = token
 
-    log(f"回填 {order_no}（purchase_id={purchase_id}，Sheet B={item.get('status')}）")
+    log(f"回填 {order_no}（purchase_id={purchase_id}，Sheet B={item.get('status')}，isCharge={form_data.get('isCharge')}，isRefund={form_data.get('isRefund')}）")
     post_resp = session.post(edit_url, data=form_data, timeout=20)
     post_resp.raise_for_status()
     log(f"✅ {order_no} 回填完成")
