@@ -1,34 +1,30 @@
-# -*- coding: utf-8 -*-
 # ============================================================
 # 檔名：change_order.py
-# 版本：v1.3
-# 模組：清潔異動後端模組
+# 版本：v1.4
+# 模組：清潔異動模組：車馬費 / 異動服務收款 / 異動服務退款
 # 建立日期：2026-06-22
 # 最後更新：2026-06-24
 #
 # Change Log
+# v1.4
+# - 修正階段 B 回填後台：isCharge / isRefund 依後台 radio value 寫入。
+# - 待加收 / 已加收時，M 欄寫入加收日期。
+# - 加收備註若有發票號碼，補上「，開立發票{發票號碼}」，並插入財務備註第一列，不覆蓋原內容。
+# - 待退款 / 已退款時，AC 欄寫入退款日期。
+# - 待退備註若有退款日期，補上「，{退款日期}已退款」，並插入財務備註第一列，不覆蓋原內容。
+# - 階段 A 寫入 Sheet 時保留 K 欄公式，不覆蓋台北 / 台中清潔異動工作表 K 欄。
 # v1.3
-# - 修正回填系統 radio 欄位值：isCharge/isRefund 依後台實際值寫入 0/1/2/3，避免畫面顯示成功但後台仍為「無」。
-# - 階段 B 支援指定 Sheet 列號回填，可輸入 19、19,21 或 19-22。
-# - 保留 v1.2 的 prod/dev 環境切換、台中 gid 與 K 欄公式邏輯。
-#
+# - 階段 B 支援使用者輸入指定 Sheet 列號後再回填。
 # v1.2
-# - 新增 prod/dev 環境切換，服務異動查詢與回填會跟隨登入區環境。
-# - 更新台中清潔異動工作表 gid=759897417。
-# - 台北、台中清潔異動工作表 K 欄統一寫入公式：
-#   =TEXT(E列,"YYYY/MM/DD")&" "&G列&" "&C列&"--"&J列
-# - 移除各情境列資料中的 K 欄文字值，避免覆蓋 K 欄公式邏輯。
+# - 新增 prod/dev 環境切換，並同步台中清潔異動工作表 gid。
 # ============================================================
+# -*- coding: utf-8 -*-
 """
 清潔異動模組：車馬費 / 異動服務收款 / 異動服務退款
 
 整體分兩個階段，互相獨立執行：
   階段 A：fetch_and_calc()  → 查訂單 + 試算金額 → 寫入「清潔異動工作表」
   階段 B：sync_pending_rows() → 讀「清潔異動工作表」待處理列 → 回填後台 purchase/edit → 更新 Sheet 狀態
-
-本檔案只負責「清潔異動」這條業務邏輯，網路登入 session、CSRF 處理沿用
-memo.py / shift.py / atm.py 既有的共用函式。Google Sheet 連線方式比照
-memo.py 用 gspread + Service Account。
 """
 
 import re
@@ -644,6 +640,7 @@ def build_charge_row(order: dict, change_fee_info: dict, service_note: str,
         "E": _today_taipei_str(today),
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value, "J": j_value,
+        "K": service_note or "",
         "M": "", "N": change_fee_info["change_fee"], "O": "",
         "_calc_amount": change_fee_info["change_fee"],
         "_calc_note": change_fee_info["calc_note"],
@@ -663,6 +660,7 @@ def build_refund_row(order: dict, change_fee_info: dict, service_note: str,
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value,
         "J": j_value,
+        "K": service_note or "",
         "R": "信用卡" if order.get("payway") != "儲值金" else "儲值金",
         "S": refund_amount,
         "X": order.get("invoice_no", ""),
@@ -737,6 +735,7 @@ def build_addtime_row(order: dict, time_fee_info: dict, service_note: str,
         "E": _today_taipei_str(today),
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value, "J": j_value,
+        "K": service_note or "",
         "M": "", "N": time_fee_info["amount"], "O": "",
         "_calc_amount": time_fee_info["amount"],
         "_calc_note": time_fee_info["calc_note"],
@@ -756,6 +755,7 @@ def build_reducetime_row(order: dict, time_fee_info: dict, service_note: str,
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value,
         "J": j_value,
+        "K": service_note or "",
         "R": "信用卡" if order.get("payway") != "儲值金" else "儲值金",
         "S": time_fee_info["amount"],
         "X": order.get("invoice_no", ""),
@@ -776,6 +776,7 @@ def build_weekday_to_weekend_row(order: dict, time_fee_info: dict, service_note:
         "E": _today_taipei_str(today),
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value, "J": j_value,
+        "K": service_note or "",
         "M": "", "N": time_fee_info["amount"], "O": "",
         "_calc_amount": time_fee_info["amount"],
         "_calc_note": time_fee_info["calc_note"],
@@ -793,6 +794,7 @@ def build_weekend_to_weekday_row(order: dict, time_fee_info: dict, service_note:
         "E": _today_taipei_str(today),
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value, "J": j_value,
+        "K": service_note or "",
         "R": "信用卡" if order.get("payway") != "儲值金" else "儲值金",
         "S": time_fee_info["amount"],
         "X": order.get("invoice_no", ""),
@@ -827,6 +829,7 @@ def build_manual_refund_row(order: dict, amount, refund_type_label: str, service
         "F": customer_type, "G": order["order_no"], "H": order["customer_name"],
         "I": i_value,
         "J": j_value,
+        "K": service_note or "",
         "R": "信用卡" if order.get("payway") != "儲值金" else "儲值金",
         "S": amount,
         "X": order.get("invoice_no", ""),
@@ -834,13 +837,6 @@ def build_manual_refund_row(order: dict, amount, refund_type_label: str, service
         "_calc_amount": amount,
         "_calc_note": f"{refund_type_label}（人工輸入金額）= ${amount}",
     }
-
-
-
-def _clean_change_k_formula(row_number: int) -> str:
-    """K 欄公式：日期 + 客戶姓名 + 訂單編號 + 異動說明。"""
-    return f'=TEXT(E{row_number},"YYYY/MM/DD")&" "&G{row_number}&" "&C{row_number}&"--"&J{row_number}'
-
 
 def append_rows_to_sheet(region: str, rows: list, ui_logger=None):
     """
@@ -863,9 +859,10 @@ def append_rows_to_sheet(region: str, rows: list, ui_logger=None):
         last_data_row -= 1
     start_row = last_data_row + 1
 
+    # K 欄為工作表公式：=TEXT(E列,"YYYY/MM/DD")&" "&G列&" "&C列&"--"&J列
+    # 程式不可覆蓋 K 欄，避免台北 / 台中公式被清掉。
     col_letters = sorted(set(
-        k for row in rows for k in row.keys()
-        if not k.startswith("_") and k != "K"
+        k for row in rows for k in row.keys() if not k.startswith("_") and k != "K"
     ))
 
     needed_rows = start_row + len(rows) - 1
@@ -880,9 +877,8 @@ def append_rows_to_sheet(region: str, rows: list, ui_logger=None):
             for col in col_letters:
                 if col in row and row[col] != "":
                     ws.update_acell(f"{col}{target_row}", row[col])
-            ws.update_acell(f"K{target_row}", _clean_change_k_formula(target_row))
             written += 1
-            log(f"✅ 已寫入第 {target_row} 列：{row.get('G', '')}（K欄公式已更新）")
+            log(f"✅ 已寫入第 {target_row} 列：{row.get('G', '')}")
         except Exception as e:
             errors.append(f"第 {target_row} 列（{row.get('G','')}）寫入失敗：{e}")
 
@@ -1059,44 +1055,6 @@ def _unchecked_value(controls: dict, name: str) -> Optional[str]:
     return None
 
 
-def _set_radio_value(form_data: dict, controls: dict, name: str, value, ui_logger=None):
-    """
-    後台加收/退款狀態是 radio：
-      isCharge: 0=無, 1=待加收, 2=已加收
-      isRefund: 0=無, 1=待退款, 2=已部分退款, 3=已全額退款
-    不能沿用 _set_checkbox，否則會抓到第一個 radio value=0，造成 POST 後仍顯示「無」。
-    """
-    value = str(value)
-    if name in controls:
-        radio_values = [str(c.get("value", "")) for c in controls.get(name, []) if c.get("type") == "radio"]
-        if radio_values and value not in radio_values and ui_logger:
-            ui_logger(f"⚠️ radio 欄位 {name} 沒有選項值 {value}，現有值：{radio_values}")
-    form_data[name] = value
-    return name
-
-
-def _parse_sheet_row_spec(row_spec: str) -> set[int]:
-    """解析 Sheet 列號：19、19,21、19-22。空字串代表不限制。"""
-    text = str(row_spec or "").strip()
-    if not text:
-        return set()
-    rows = set()
-    for part in re.split(r"[,，\s]+", text):
-        part = part.strip()
-        if not part:
-            continue
-        if re.fullmatch(r"\d+[-~～]\d+", part):
-            a, b = map(int, re.split(r"[-~～]", part, maxsplit=1))
-            if a > b:
-                a, b = b, a
-            rows.update(range(a, b + 1))
-        elif part.isdigit():
-            rows.add(int(part))
-        else:
-            raise ValueError(f"列號格式錯誤：{part}（支援 19、19,21、19-22）")
-    return {r for r in rows if r >= 2}
-
-
 def _set_checkbox(form_data: dict, controls: dict, names: list, checked: bool,
                   keywords: list = None, fallback_name: str = None,
                   ui_logger=None):
@@ -1120,6 +1078,31 @@ def _set_checkbox(form_data: dict, controls: dict, names: list, checked: bool,
         else:
             form_data[name] = hidden_value
     return name
+
+
+def _set_radio_value(form_data: dict, controls: dict, name: str, value, ui_logger=None):
+    """直接設定 radio 欄位值。後台 isCharge / isRefund 是同名 radio，不可用 checkbox 勾選邏輯。"""
+    value = str(value)
+    if name in controls:
+        allowed = [str(c.get("value", "")) for c in controls.get(name, [])]
+        if value not in allowed and ui_logger:
+            ui_logger(f"⚠️ {name} 找不到選項值 {value}，可用值：{allowed}")
+    form_data[name] = value
+    return name
+
+
+def _append_suffix_once(text: str, suffix: str) -> str:
+    text = str(text or "").strip()
+    suffix = str(suffix or "").strip()
+    if not suffix:
+        return text
+    if suffix in text:
+        return text
+    return f"{text}{suffix}" if text else suffix.lstrip("，, ")
+
+
+def _first_line_for_finance(note: str) -> str:
+    return str(note or "").strip().splitlines()[0].strip() if str(note or "").strip() else ""
 
 
 def _set_field(form_data: dict, controls: dict, names: list, value,
@@ -1181,7 +1164,7 @@ def _row_amount(row: list, status: str) -> str:
     return ""
 
 
-def get_pending_rows(region: str, row_spec: str = "", ui_logger=None):
+def get_pending_rows(region: str, ui_logger=None):
     """
     讀取清潔異動工作表，篩出需要回填後台的列。
     支援 B 欄狀態：待收款、待退款、已收款、已退款；且對應金額欄需有值。
@@ -1193,14 +1176,9 @@ def get_pending_rows(region: str, row_spec: str = "", ui_logger=None):
 
     ws = get_worksheet(region)
     all_values = ws.get_all_values()
-    target_rows = _parse_sheet_row_spec(row_spec)
-    if target_rows:
-        log(f"僅掃描指定 Sheet 列號：{', '.join(str(r) for r in sorted(target_rows))}")
 
     pending = []
     for row_no, row in enumerate(all_values[1:], start=2):
-        if target_rows and row_no not in target_rows:
-            continue
         if len(row) < 2:
             continue
         status = _sheet_cell(row, "B").strip()
@@ -1228,10 +1206,6 @@ def get_pending_rows(region: str, row_spec: str = "", ui_logger=None):
             "raw": row,
         })
 
-    if target_rows:
-        missing_rows = sorted(target_rows - {p["sheet_row"] for p in pending})
-        if missing_rows:
-            log(f"⚠️ 指定列號未納入回填（可能 B 欄狀態/訂單編號/金額不符合）：{', '.join(map(str, missing_rows))}")
     log(f"掃描到 {len(pending)} 筆待回填資料")
     return pending
 
@@ -1242,53 +1216,73 @@ def apply_sheet_row_to_form(form_data: dict, controls: dict, item: dict,
     raw = item["raw"]
     status = item.get("status") or _sheet_cell(raw, "B").strip()
     backend_note = _sheet_cell(raw, "K").strip()
+    charge_date = _normalize_date_value(_sheet_cell(raw, "M"))
+    charge_invoice = _sheet_cell(raw, "O").strip()
+    refund_date = _normalize_date_value(_sheet_cell(raw, "AC"))
 
     if status == STATUS_PENDING_CHARGE:
-        _set_radio_value(form_data, controls, "isCharge", 1, ui_logger=ui_logger)
-        _set_radio_value(form_data, controls, "isRefund", 0, ui_logger=ui_logger)
+        _set_radio_value(form_data, controls, "isCharge", "1", ui_logger=ui_logger)
+        _set_radio_value(form_data, controls, "isRefund", "0", ui_logger=ui_logger)
+        _set_field(form_data, controls, FIELD_CHARGE_DATE, charge_date,
+                   keywords=["加收日期", "收款日期", "收款時間"], fallback_name="chargeDate", ui_logger=ui_logger)
         _set_field(form_data, controls, FIELD_CHARGE_AMOUNT, _sheet_cell(raw, "N"),
                    keywords=["加收金額", "收款金額"], fallback_name="chargeAmount", ui_logger=ui_logger)
-        _set_field(form_data, controls, FIELD_CHARGE_INVOICE, _sheet_cell(raw, "O"),
+        _set_field(form_data, controls, FIELD_CHARGE_INVOICE, charge_invoice,
                    keywords=["加收發票", "收款發票"], fallback_name="chargeInvoice", ui_logger=ui_logger)
-        _set_field(form_data, controls, FIELD_CHARGE_NOTE, backend_note,
+        charge_note = _append_suffix_once(backend_note, f"，開立發票{charge_invoice}" if charge_invoice else "")
+        _set_field(form_data, controls, FIELD_CHARGE_NOTE, charge_note,
                    keywords=["加收備註", "收款備註"], fallback_name="chargeNote", ui_logger=ui_logger)
+        finance_line = _first_line_for_finance(charge_note)
+        if finance_line:
+            _prepend_field(form_data, controls, FIELD_FINANCE_NOTE, finance_line,
+                           keywords=["財務備註"], ui_logger=ui_logger)
         return
 
     if status == STATUS_PENDING_REFUND:
-        _set_radio_value(form_data, controls, "isCharge", 0, ui_logger=ui_logger)
-        _set_radio_value(form_data, controls, "isRefund", 1, ui_logger=ui_logger)
+        _set_radio_value(form_data, controls, "isCharge", "0", ui_logger=ui_logger)
+        _set_radio_value(form_data, controls, "isRefund", "1", ui_logger=ui_logger)
+        _set_field(form_data, controls, FIELD_REFUND_DATE, refund_date,
+                   keywords=["退款日期", "退款時間"], fallback_name="refundDate", ui_logger=ui_logger)
         _set_field(form_data, controls, FIELD_REFUND_AMOUNT, _sheet_cell(raw, "S"),
                    keywords=["退款金額"], fallback_name="refundAmount", ui_logger=ui_logger)
         _set_field(form_data, controls, FIELD_REFUND_FLOW, _sheet_cell(raw, "R"),
                    keywords=["退款金流"], ui_logger=ui_logger)
-        _set_field(form_data, controls, FIELD_REFUND_NOTE, backend_note,
+        refund_note = _append_suffix_once(backend_note, f"，{refund_date}已退款" if refund_date else "")
+        _set_field(form_data, controls, FIELD_REFUND_NOTE, refund_note,
                    keywords=["待退備註", "退款備註"], fallback_name="refundNote", ui_logger=ui_logger)
+        finance_line = _first_line_for_finance(refund_note)
+        if finance_line:
+            _prepend_field(form_data, controls, FIELD_FINANCE_NOTE, finance_line,
+                           keywords=["財務備註"], ui_logger=ui_logger)
         return
 
     if status == STATUS_DONE_CHARGE:
-        _set_radio_value(form_data, controls, "isCharge", 2, ui_logger=ui_logger)
-        _set_radio_value(form_data, controls, "isRefund", 0, ui_logger=ui_logger)
-        _set_field(form_data, controls, FIELD_CHARGE_DATE, _normalize_date_value(_sheet_cell(raw, "M")),
-                   keywords=["收款日期", "收款時間"], fallback_name="chargeDate", ui_logger=ui_logger)
+        _set_radio_value(form_data, controls, "isCharge", "2", ui_logger=ui_logger)
+        _set_radio_value(form_data, controls, "isRefund", "0", ui_logger=ui_logger)
+        _set_field(form_data, controls, FIELD_CHARGE_DATE, charge_date,
+                   keywords=["加收日期", "收款日期", "收款時間"], fallback_name="chargeDate", ui_logger=ui_logger)
         _set_field(form_data, controls, FIELD_CHARGE_AMOUNT, _sheet_cell(raw, "N"),
                    keywords=["加收金額", "收款金額"], fallback_name="chargeAmount", ui_logger=ui_logger)
-        _set_field(form_data, controls, FIELD_CHARGE_INVOICE, _sheet_cell(raw, "O"),
+        _set_field(form_data, controls, FIELD_CHARGE_INVOICE, charge_invoice,
                    keywords=["加收發票", "收款發票"], fallback_name="chargeInvoice", ui_logger=ui_logger)
-        _set_field(form_data, controls, FIELD_CHARGE_NOTE, backend_note,
+        charge_note = _append_suffix_once(backend_note, f"，開立發票{charge_invoice}" if charge_invoice else "")
+        _set_field(form_data, controls, FIELD_CHARGE_NOTE, charge_note,
                    keywords=["加收備註", "收款備註"], fallback_name="chargeNote", ui_logger=ui_logger)
-        _prepend_field(form_data, controls, FIELD_FINANCE_NOTE, backend_note,
-                       keywords=["財務備註"], ui_logger=ui_logger)
+        finance_line = _first_line_for_finance(charge_note)
+        if finance_line:
+            _prepend_field(form_data, controls, FIELD_FINANCE_NOTE, finance_line,
+                           keywords=["財務備註"], ui_logger=ui_logger)
         return
 
     if status == STATUS_DONE_REFUND:
-        _set_radio_value(form_data, controls, "isCharge", 0, ui_logger=ui_logger)
+        _set_radio_value(form_data, controls, "isCharge", "0", ui_logger=ui_logger)
 
         refund_amount = _parse_money_value(_sheet_cell(raw, "S"))
         order_total = _parse_money_value((order or {}).get("total"))
         is_full_refund = bool(order_total and refund_amount == order_total)
-        _set_radio_value(form_data, controls, "isRefund", 3 if is_full_refund else 2, ui_logger=ui_logger)
+        _set_radio_value(form_data, controls, "isRefund", "3" if is_full_refund else "2", ui_logger=ui_logger)
 
-        _set_field(form_data, controls, FIELD_REFUND_DATE, _normalize_date_value(_sheet_cell(raw, "AC")),
+        _set_field(form_data, controls, FIELD_REFUND_DATE, refund_date,
                    keywords=["退款日期", "退款時間"], fallback_name="refundDate", ui_logger=ui_logger)
         _set_field(form_data, controls, FIELD_REFUND_AMOUNT, _sheet_cell(raw, "S"),
                    keywords=["退款金額"], fallback_name="refundAmount", ui_logger=ui_logger)
@@ -1296,10 +1290,13 @@ def apply_sheet_row_to_form(form_data: dict, controls: dict, item: dict,
                    keywords=["折讓單號碼", "退款編號"], fallback_name="refundNumber", ui_logger=ui_logger)
         _set_field(form_data, controls, FIELD_REFUND_FLOW, _sheet_cell(raw, "R"),
                    keywords=["退款金流"], ui_logger=ui_logger)
-        _set_field(form_data, controls, FIELD_REFUND_NOTE, backend_note,
+        refund_note = _append_suffix_once(backend_note, f"，{refund_date}已退款" if refund_date else "")
+        _set_field(form_data, controls, FIELD_REFUND_NOTE, refund_note,
                    keywords=["待退備註", "退款備註"], fallback_name="refundNote", ui_logger=ui_logger)
-        _prepend_field(form_data, controls, FIELD_FINANCE_NOTE, backend_note,
-                       keywords=["財務備註"], ui_logger=ui_logger)
+        finance_line = _first_line_for_finance(refund_note)
+        if finance_line:
+            _prepend_field(form_data, controls, FIELD_FINANCE_NOTE, finance_line,
+                           keywords=["財務備註"], ui_logger=ui_logger)
         return
 
     raise RuntimeError(f"不支援的 B 欄狀態：{status}")
@@ -1334,7 +1331,7 @@ def sync_one_to_purchase_edit(item: dict, session: requests.Session, ui_logger=N
     apply_sheet_row_to_form(form_data, controls, item, order=order, ui_logger=ui_logger)
     form_data["_token"] = token
 
-    log(f"回填 {order_no}（purchase_id={purchase_id}，Sheet B={item.get('status')}，isCharge={form_data.get('isCharge')}，isRefund={form_data.get('isRefund')}）")
+    log(f"回填 {order_no}（purchase_id={purchase_id}，Sheet B={item.get('status')}）")
     post_resp = session.post(edit_url, data=form_data, timeout=20)
     post_resp.raise_for_status()
     log(f"✅ {order_no} 回填完成")
