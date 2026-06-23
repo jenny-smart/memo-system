@@ -1,12 +1,17 @@
 # -*- coding: utf-8 -*-
 # ============================================================
 # 檔名：memoapp.py
-# 版本：v1.3
+# 版本：v1.5
 # 模組：檸檬營運自動化工具 Streamlit 主程式
 # 建立日期：2026-06-22
 # 最後更新：2026-06-24
 #
 # Change Log
+# v1.3
+# v1.5
+# - 配合 change_order.py v1.5：階段 B 指定列號仍以 row_spec 傳入 get_pending_rows。
+# - 重新提供新版 memoapp.py，避免只更新 change_order.py 造成版本不一致。
+#
 # v1.3
 # - 服務異動階段 B 改為必填指定 Sheet 列號後才掃描/回填。
 # - 配合 change_order.py v1.3 修正 isCharge/isRefund radio 回填值。
