@@ -1,12 +1,16 @@
 # -*- coding: utf-8 -*-
 # ============================================================
 # 檔名：memoapp.py
-# 版本：v1.2
+# 版本：v1.3
 # 模組：檸檬營運自動化工具 Streamlit 主程式
 # 建立日期：2026-06-22
 # 最後更新：2026-06-24
 #
 # Change Log
+# v1.3
+# - 服務異動階段 B 改為必填指定 Sheet 列號後才掃描/回填。
+# - 配合 change_order.py v1.3 修正 isCharge/isRefund radio 回填值。
+#
 # v1.2
 # - 登入區同步呼叫 change_order.set_env(env_option)，讓服務異動模組跟隨 prod/dev。
 # - 配合 change_order.py v1.2：清潔異動 K 欄由公式產生。
@@ -1460,9 +1464,13 @@ def render_change_order_stage_a():
 
 def render_change_order_stage_b():
     step("3", "讀取清潔異動工作表待處理列")
-    st.markdown('<div class="info-strip"><b>掃描條件</b><ul><li>B 欄為待收款、待退款、已收款、已退款</li><li>金額欄位已填寫</li></ul><b>回填結果</b><ul><li>依狀態寫回後台</li><li>AD 欄寫入系統回填時間</li><li>不會自動修改 B 欄狀態</li></ul></div>', unsafe_allow_html=True)
-    region = st.selectbox("地區", ["台北", "台中"], key="co_region_b")
-    scan_btn = st.button("🔍 掃描待處理清單", use_container_width=True, disabled=not st.session_state.credentials_ready)
+    st.markdown('<div class="info-strip"><b>掃描條件</b><ul><li>請先輸入要回填的 Sheet 列號，例如 <code>19</code>、<code>19,21</code>、<code>19-22</code></li><li>B 欄為待收款、待退款、已收款、已退款</li><li>金額欄位已填寫</li></ul><b>回填結果</b><ul><li>依狀態寫回後台</li><li>AD 欄寫入系統回填時間</li><li>不會自動修改 B 欄狀態</li></ul></div>', unsafe_allow_html=True)
+    c_region, c_rows = st.columns([1, 3])
+    with c_region:
+        region = st.selectbox("地區", ["台北", "台中"], key="co_region_b")
+    with c_rows:
+        row_spec = st.text_input("要回填的 Sheet 列號", placeholder="例如：19 或 19,21 或 19-22", key="co_stage_b_row_spec")
+    scan_btn = st.button("🔍 掃描指定列號", use_container_width=True, disabled=not (st.session_state.credentials_ready and row_spec.strip()))
 
     with st.expander("執行 LOG", expanded=True):
         log_box_local = st.empty()
@@ -1478,7 +1486,7 @@ def render_change_order_stage_b():
             st.session_state.logs = []; st.session_state.co_pending_rows = []
             co_log("===== 開始掃描清潔異動工作表 =====")
             with st.spinner("掃描中，請稍候…"):
-                pending = change_order.get_pending_rows(region, ui_logger=co_log)
+                pending = change_order.get_pending_rows(region, row_spec=row_spec.strip(), ui_logger=co_log)
             st.session_state.co_pending_rows = pending
             co_log(f"✅ 掃描完成，共 {len(pending)} 筆"); st.rerun()
         except Exception as e:
@@ -1486,7 +1494,7 @@ def render_change_order_stage_b():
 
     pending = st.session_state.get("co_pending_rows", [])
     if pending:
-        st.markdown("---"); step("4", "待處理清單（請勾選要回填的項目）")
+        st.markdown("---"); step("4", "指定列號待處理清單（請勾選要回填的項目）")
         selected = []
         for item in pending:
             status = item.get("status") or ("待收款" if item["kind"] == "charge" else "待退款")
