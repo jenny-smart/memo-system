@@ -9,6 +9,7 @@ import shift
 import atm
 atm = importlib.reload(atm)
 import change_order
+change_order = importlib.reload(change_order)
 
 st.set_page_config(
     page_title="檸檬營運自動化工具",
@@ -534,6 +535,7 @@ with st.expander(
         env_option = st.selectbox("環境", ["prod", "dev"], index=0, key="login_env")
 
     memo.set_env(env_option)
+    change_order.set_env(env_option)
     memo.set_runtime_credentials(email, password)
     st.session_state.credentials_ready = bool(email.strip()) and bool(password.strip())
 
