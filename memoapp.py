@@ -1,5 +1,16 @@
-# memoapp.py
 # -*- coding: utf-8 -*-
+# ============================================================
+# 檔名：memoapp.py
+# 版本：v1.2
+# 模組：檸檬營運自動化工具 Streamlit 主程式
+# 建立日期：2026-06-22
+# 最後更新：2026-06-24
+#
+# Change Log
+# v1.2
+# - 登入區同步呼叫 change_order.set_env(env_option)，讓服務異動模組跟隨 prod/dev。
+# - 配合 change_order.py v1.2：清潔異動 K 欄由公式產生。
+# ============================================================
 import streamlit as st
 import re
 import importlib
