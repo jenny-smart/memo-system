@@ -1587,7 +1587,11 @@ def render_assessment_section():
         else:
             st.warning("未能從建議行解析到「M人N小時」，服務金額與時間欄位略過")
 
-        rec_line = recommend_line
+        rec_line = re.sub(
+            r"(建議\s*\d+\s*人\s*)(\d+(?:\.\d+)?)(?!小時)",
+            lambda mo: mo.group(1) + mo.group(2) + "小時",
+            recommend_line
+        )
 
         # 版本一：header + 建議 + 服務金額 + 服務時間 + 評估內容: + 空行 + 項目（含時數）+ 加總
         v1_lines = [header_line, rec_line] + extra_lines + ["評估內容：", ""] + item_lines
