@@ -1,25 +1,5 @@
+# memoapp.py
 # -*- coding: utf-8 -*-
-# ============================================================
-# 檔名：memoapp.py
-# 版本：v1.6
-# 模組：檸檬營運自動化工具 Streamlit 主程式
-# 建立日期：2026-06-22
-# 最後更新：2026-06-24
-#
-# Change Log
-# v1.3
-# v1.5
-# - 配合 change_order.py v1.5：階段 B 指定列號仍以 row_spec 傳入 get_pending_rows。
-# - 重新提供新版 memoapp.py，避免只更新 change_order.py 造成版本不一致。
-#
-# v1.3
-# - 服務異動階段 B 改為必填指定 Sheet 列號後才掃描/回填。
-# - 配合 change_order.py v1.3 修正 isCharge/isRefund radio 回填值。
-#
-# v1.2
-# - 登入區同步呼叫 change_order.set_env(env_option)，讓服務異動模組跟隨 prod/dev。
-# - 配合 change_order.py v1.2：清潔異動 K 欄由公式產生。
-# ============================================================
 import streamlit as st
 import re
 import importlib
@@ -29,7 +9,6 @@ import shift
 import atm
 atm = importlib.reload(atm)
 import change_order
-change_order = importlib.reload(change_order)
 
 st.set_page_config(
     page_title="檸檬營運自動化工具",
@@ -555,7 +534,6 @@ with st.expander(
         env_option = st.selectbox("環境", ["prod", "dev"], index=0, key="login_env")
 
     memo.set_env(env_option)
-    change_order.set_env(env_option)
     memo.set_runtime_credentials(email, password)
     st.session_state.credentials_ready = bool(email.strip()) and bool(password.strip())
 
@@ -1469,13 +1447,9 @@ def render_change_order_stage_a():
 
 def render_change_order_stage_b():
     step("3", "讀取清潔異動工作表待處理列")
-    st.markdown('<div class="info-strip"><b>掃描條件</b><ul><li>請先輸入要回填的 Sheet 列號，例如 <code>19</code>、<code>19,21</code>、<code>19-22</code></li><li>B 欄為待收款、待退款、已收款、已退款</li><li>金額欄位已填寫</li></ul><b>回填結果</b><ul><li>依狀態寫回後台</li><li>AD 欄寫入系統回填時間</li><li>不會自動修改 B 欄狀態</li></ul></div>', unsafe_allow_html=True)
-    c_region, c_rows = st.columns([1, 3])
-    with c_region:
-        region = st.selectbox("地區", ["台北", "台中"], key="co_region_b")
-    with c_rows:
-        row_spec = st.text_input("要回填的 Sheet 列號", placeholder="例如：19 或 19,21 或 19-22", key="co_stage_b_row_spec")
-    scan_btn = st.button("🔍 掃描指定列號", use_container_width=True, disabled=not (st.session_state.credentials_ready and row_spec.strip()))
+    st.markdown('<div class="info-strip"><b>掃描條件</b><ul><li>B 欄為待收款、待退款、已收款、已退款</li><li>金額欄位已填寫</li></ul><b>回填結果</b><ul><li>依狀態寫回後台</li><li>AD 欄寫入系統回填時間</li><li>不會自動修改 B 欄狀態</li></ul></div>', unsafe_allow_html=True)
+    region = st.selectbox("地區", ["台北", "台中"], key="co_region_b")
+    scan_btn = st.button("🔍 掃描待處理清單", use_container_width=True, disabled=not st.session_state.credentials_ready)
 
     with st.expander("執行 LOG", expanded=True):
         log_box_local = st.empty()
@@ -1491,7 +1465,7 @@ def render_change_order_stage_b():
             st.session_state.logs = []; st.session_state.co_pending_rows = []
             co_log("===== 開始掃描清潔異動工作表 =====")
             with st.spinner("掃描中，請稍候…"):
-                pending = change_order.get_pending_rows(region, row_spec=row_spec.strip(), ui_logger=co_log)
+                pending = change_order.get_pending_rows(region, ui_logger=co_log)
             st.session_state.co_pending_rows = pending
             co_log(f"✅ 掃描完成，共 {len(pending)} 筆"); st.rerun()
         except Exception as e:
@@ -1499,7 +1473,7 @@ def render_change_order_stage_b():
 
     pending = st.session_state.get("co_pending_rows", [])
     if pending:
-        st.markdown("---"); step("4", "指定列號待處理清單（請勾選要回填的項目）")
+        st.markdown("---"); step("4", "待處理清單（請勾選要回填的項目）")
         selected = []
         for item in pending:
             status = item.get("status") or ("待收款" if item["kind"] == "charge" else "待退款")
@@ -1571,23 +1545,57 @@ def render_assessment_section():
                 note_lines.append(line)
 
         m = re.search(r"建議\s*(\d+)\s*人\s*(\d+(?:\.\d+)?)", recommend_line)
-        price_str = ""
+        extra_lines = []
         if m:
-            people = float(m.group(1)); hours = float(m.group(2))
+            people = float(m.group(1))
+            hours  = float(m.group(2))
             wd_price = int(round(people * hours * 600))
             wk_price = int(round(people * hours * 700))
-            price_str = f"，平日${wd_price}，週末${wk_price}"
-            st.success(f"解析：{int(people)} 人 × {hours} 小時 → 平日 ${wd_price}（×600）、週末 ${wk_price}（×700）")
+
+            # 服務金額（含稅）
+            amount_line = f"服務金額：平日 ${wd_price}（含稅）；週末 ${wk_price}（含稅）"
+
+            # 服務時間：依時數規則
+            M = int(people)
+            N = hours
+            hrs_label = int(N) if N == int(N) else N
+            time_label = f"{M}人{hrs_label}小時"
+
+            if N <= 3:
+                # 短班：AM 09 開始，PM 14 開始，各 N 小時
+                am_end = int(9 + N)
+                pm_end = int(14 + N)
+                time_range = f"09-{am_end:02d}點 或 14-{pm_end:02d}點"
+            elif N == 4:
+                # 4 小時：AM 08:30 起，PM 14:00 起
+                time_range = "08:30-12:30 或 14:00-18:00"
+            else:
+                # 5 小時以上：09 開始，加 1 小時休息
+                end_raw = 9 + N + 1
+                end_h   = int(end_raw)
+                end_m   = int(round((end_raw - end_h) * 60))
+                end_str = f"{end_h:02d}" if end_m == 0 else f"{end_h:02d}:{end_m:02d}"
+                time_range = f"09-{end_str}點，中間休息1小時"
+
+            time_line = f"服務時間：{time_label}--{time_range}"
+            extra_lines = [amount_line, time_line]
+
+            st.success(
+                f"解析：{M} 人 × {hrs_label} 小時 → "
+                f"平日 ${wd_price}（含稅）、週末 ${wk_price}（含稅）｜{time_range}"
+            )
         else:
-            st.warning("未能從建議行解析到「M人N小時」，金額欄位略過")
+            st.warning("未能從建議行解析到「M人N小時」，服務金額與時間欄位略過")
 
-        rec_line = recommend_line + price_str
+        rec_line = recommend_line
 
-        v1_lines = [header_line, rec_line, ""] + item_lines
+        # 版本一：header + 建議 + 服務金額 + 服務時間 + 評估內容: + 空行 + 項目（含時數）+ 加總
+        v1_lines = [header_line, rec_line] + extra_lines + ["評估內容：", ""] + item_lines
         if sum_line: v1_lines.append(sum_line)
 
+        # 版本二：header + 建議 + 服務金額 + 服務時間 + 評估內容: + 空行 + 項目（去時數）+ 注意事項
         v2_item_lines = [re.sub(r"[\d.]+\s*$", "", l).rstrip() for l in item_lines]
-        v2_lines = [header_line, rec_line, ""] + v2_item_lines
+        v2_lines = [header_line, rec_line] + extra_lines + ["評估內容：", ""] + v2_item_lines
         if note_lines:
             v2_lines.append("")
             v2_lines.extend(note_lines)
