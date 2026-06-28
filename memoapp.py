@@ -1533,12 +1533,18 @@ def render_assessment_section():
             if phase == "header" and i == 0:
                 header_line = trimmed; phase = "recommend"; continue
             if phase == "recommend":
-                if trimmed.startswith("建議"):
-                    recommend_line = trimmed; phase = "items"; continue
+                if "建議" in trimmed:
+                    # 建議可能夾在長句後半（如「...，建議3人8保留加時可能」），
+                    # 從「建議」開始截取，丟掉前面的說明文字
+                    idx = trimmed.index("建議")
+                    recommend_line = trimmed[idx:]
+                    phase = "items"
+                # 其他行（@Jenny、說明文字等）在 recommend 階段直接略過
+                continue
             if phase == "items":
                 if re.match(r"^[\d.+\s]+=", trimmed):
                     sum_line = trimmed; phase = "notes"; continue
-                if re.match(r"^\d+\.", trimmed) or re.match(r"^[a-cA-C]\)", trimmed):
+                if re.match(r"^\d+\.[^\d]", trimmed) or re.match(r"^[a-cA-C]\)", trimmed):
                     phase = "notes"; note_lines.append(line); continue
                 item_lines.append(trimmed); continue
             if phase == "notes":
@@ -1597,9 +1603,10 @@ def render_assessment_section():
         v1_lines = [header_line, rec_line] + extra_lines + ["", "評估內容："] + item_lines
         if sum_line: v1_lines.append(sum_line)
 
-        # 版本二：header + 建議 + 服務金額 + 服務時間 + 空行 + 評估內容: + 項目（去時數）+ 注意事項
+        # 版本二：header + 建議 + 服務金額 + 服務時間 + 空行 + 評估內容: + 項目（去時數）+ 加總 + 注意事項
         v2_item_lines = [re.sub(r"[\d.]+\s*$", "", l).rstrip() for l in item_lines]
         v2_lines = [header_line, rec_line] + extra_lines + ["", "評估內容："] + v2_item_lines
+        if sum_line: v2_lines.append(sum_line)
         if note_lines:
             v2_lines.append("")
             v2_lines.extend(note_lines)
