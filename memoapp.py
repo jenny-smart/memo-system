@@ -1447,8 +1447,12 @@ def render_change_order_stage_a():
 
 def render_change_order_stage_b():
     step("3", "讀取清潔異動工作表待處理列")
-    st.markdown('<div class="info-strip"><b>掃描條件</b><ul><li>B 欄為待收款、待退款、已收款、已退款</li><li>金額欄位已填寫</li></ul><b>回填結果</b><ul><li>依狀態寫回後台</li><li>AD 欄寫入系統回填時間</li><li>不會自動修改 B 欄狀態</li></ul></div>', unsafe_allow_html=True)
-    region = st.selectbox("地區", ["台北", "台中"], key="co_region_b")
+    st.markdown('<div class="info-strip"><b>掃描條件</b><ul><li>B 欄為待收款、待退款、已收款、已退款</li><li>金額欄位已填寫</li></ul><b>列號篩選（選填）</b><ul><li>不填 → 掃描整個工作表全部符合條件的列</li><li>填寫 → 只掃描指定列號，例如 <code>19</code>、<code>19,21</code>、<code>19-22</code></li></ul><b>回填結果</b><ul><li>依狀態寫回後台</li><li>AD 欄寫入系統回填時間</li><li>不會自動修改 B 欄狀態</li></ul></div>', unsafe_allow_html=True)
+    c_region, c_rows = st.columns([1, 3])
+    with c_region:
+        region = st.selectbox("地區", ["台北", "台中"], key="co_region_b")
+    with c_rows:
+        row_spec = st.text_input("列號篩選（選填，不填掃全部）", placeholder="例如：19 或 19,21 或 19-22，留白則掃描全部", key="co_stage_b_row_spec")
     scan_btn = st.button("🔍 掃描待處理清單", use_container_width=True, disabled=not st.session_state.credentials_ready)
 
     with st.expander("執行 LOG", expanded=True):
@@ -1465,7 +1469,7 @@ def render_change_order_stage_b():
             st.session_state.logs = []; st.session_state.co_pending_rows = []
             co_log("===== 開始掃描清潔異動工作表 =====")
             with st.spinner("掃描中，請稍候…"):
-                pending = change_order.get_pending_rows(region, ui_logger=co_log)
+                pending = change_order.get_pending_rows(region, row_spec=row_spec.strip() or None, ui_logger=co_log)
             st.session_state.co_pending_rows = pending
             co_log(f"✅ 掃描完成，共 {len(pending)} 筆"); st.rerun()
         except Exception as e:
