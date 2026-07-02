@@ -1357,7 +1357,17 @@ def render_change_order_stage_a():
         is_manual_refund = scenario in ("客訴(待退款)", "物損(待退款)")
         time_change_timing = "服務前"; change_hours = None; change_person = None
         if is_time_change:
-            time_change_timing = st.radio("加減時發生時間", ["服務前", "服務後"], horizontal=True, key="co_time_change_timing")
+            # 先從 session state 取服務日（c2 的 date_input 還沒渲染時用訂單預設值）
+            _svc = st.session_state.get("co_service_date") or (selected_orders[0].get("service_date") if selected_orders else date.today())
+            if hasattr(_svc, "strftime"):
+                _svc_date = _svc
+            else:
+                try: _svc_date = date.fromisoformat(str(_svc))
+                except: _svc_date = date.today()
+            _auto_timing = "服務後" if _svc_date <= date.today() else "服務前"
+            _auto_idx = 1 if _auto_timing == "服務後" else 0
+            st.caption(f"⚡ 依服務日 {_svc_date} 自動判斷：{_auto_timing}（可手動調整）")
+            time_change_timing = st.radio("加減時發生時間", ["服務前", "服務後"], index=_auto_idx, horizontal=True, key="co_time_change_timing")
             change_hours = st.number_input("異動時數（小時）", min_value=0.0, step=0.5, value=1.0, key="co_time_hours")
             change_person = st.number_input("異動人數", min_value=1, step=1, value=1, key="co_time_person")
         manual_amount = None
