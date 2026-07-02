@@ -1111,7 +1111,7 @@ def render_clear_shift_section():
 
     if clear_mode == "手動清空（某人 / 某段期間）":
         step("3", "設定要清空的人員與期間")
-        st.markdown('<div class="warn-strip"><b>注意</b><ul><li>會直接覆寫後台排班</li><li>沒有預覽機制</li><li>請確認姓名與日期區間</li></ul></div>', unsafe_allow_html=True)
+        st.markdown('<div class="warn-strip"><b>注意</b><ul><li>會直接覆寫後台排班</li><li>沒有預覽機制</li><li>請確認姓名與日期區間</li><li>多人範例：<code>檸檬人1,檸檬人2,檸檬人3,檸檬人4,檸檬人5,檸檬人6,檸檬人7,檸檬人8,檸檬人9,檸檬人10,檸檬人11,檸檬人12,檸檬人13</code></li></ul></div>', unsafe_allow_html=True)
         c1, c2, c3 = st.columns([2, 1.3, 1.3])
         with c1: target_names_raw = st.text_input("人員姓名", placeholder="例如：蔡立娟 或 檸檬人3，多人用逗號分隔：檸檬人2,檸檬人4")
         with c2: range_start = st.date_input("開始日期", key="clear_range_start")
