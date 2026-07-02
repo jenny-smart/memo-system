@@ -1548,8 +1548,6 @@ def render_assessment_section():
             if phase == "items":
                 if re.match(r"^[\d.+\s]+=", trimmed):
                     sum_line = trimmed; phase = "notes"; continue
-                if re.match(r"^\d+\.[^\d]", trimmed) or re.match(r"^[a-cA-C]\)", trimmed):
-                    phase = "notes"; note_lines.append(line); continue
                 item_lines.append(trimmed); continue
             if phase == "notes":
                 note_lines.append(line)
@@ -1607,10 +1605,9 @@ def render_assessment_section():
         v1_lines = [header_line, rec_line] + extra_lines + ["", "評估內容："] + item_lines
         if sum_line: v1_lines.append(sum_line)
 
-        # 版本二：header + 建議 + 服務金額 + 服務時間 + 空行 + 評估內容: + 項目（去時數）+ 加總 + 注意事項
+        # 版本二：header + 建議 + 服務金額 + 服務時間 + 空行 + 評估內容: + 項目（去時數）+ 注意事項（不含加總）
         v2_item_lines = [re.sub(r"[\d.]+\s*$", "", l).rstrip() for l in item_lines]
         v2_lines = [header_line, rec_line] + extra_lines + ["", "評估內容："] + v2_item_lines
-        if sum_line: v2_lines.append(sum_line)
         if note_lines:
             v2_lines.append("")
             v2_lines.extend(note_lines)
